@@ -751,7 +751,7 @@
     const el = mdEl;
     if (!el) return;
     tick().then(() => {
-      for (const pre of el.querySelectorAll('pre:not(.indented)')) {
+      for (const pre of el.querySelectorAll('pre:not(.indented):not(.md-mermaid-src)')) {   // mermaid 源码 pre 由容器自带按钮
         if (pre.firstElementChild?.classList.contains('doc-fence')) continue;
         const lang = (String(pre.querySelector('code')?.className || '').match(/language-([\w+#-]+)/) || [])[1] || '';
         const head = document.createElement('div');

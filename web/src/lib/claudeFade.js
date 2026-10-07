@@ -38,6 +38,7 @@ function textNodes(node) {
       const p = n.parentElement;
       if (!p) return NodeFilter.FILTER_REJECT;
       if (p.closest('.katex')) return NodeFilter.FILTER_REJECT;
+      if (p.closest('.md-mermaid-svg')) return NodeFilter.FILTER_REJECT;   // SVG 的 <text> 里不能塞 span；图整体即时显示
       if (!/\S/.test(n.nodeValue) && !p.closest('pre')) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
