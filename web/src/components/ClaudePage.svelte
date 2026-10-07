@@ -1202,6 +1202,7 @@
       <button class="d-recent" use:dropZone={sessionDrop(s)} onclick={() => pickSession(s)}>
         {#if s.thinking || s.pending}<span class="d-dot {s.thinking ? 'work' : 'ask'}"></span>{/if}
         <span class="d-title" use:marquee><span class="d-scroll">{tr(titleFor(s.id, s.title)) || t('（无标题）')}</span></span>
+        {#if s.origin === 'routine'}<span class="d-routine" title={t('定时路由自动运行')}>{t('定时')}</span>{/if}
       </button>
       <button class="d-more" aria-label={t('更多')} onclick={(e) => openMenu(e, 'session', s.id)}><span class="ic">&#xe062;</span></button>
     </div>
@@ -1602,6 +1603,9 @@
   .d-row.indent .d-dot { position: absolute; left: -14px; top: 50%; transform: translateY(-50%); }
   .d-dot.work { background: var(--coral); animation: pulse 1.2s ease-in-out infinite; }
   .d-dot.ask { background: var(--warn); animation: blink 1s steps(2) infinite; }
+  /* 定时路由跑出来的会话：标题右边挂一枚小徽标（服务端下发 origin='routine'） */
+  .d-routine { flex: none; align-self: center; font-size: 10px; line-height: 1; padding: 3px 6px; margin-left: 6px;
+    border-radius: 999px; border: 1px solid color-mix(in srgb, var(--muted) 45%, transparent); color: var(--muted); }
   @keyframes pulse { 50% { opacity: .4; } }
   @keyframes blink { 50% { opacity: 0; } }
 

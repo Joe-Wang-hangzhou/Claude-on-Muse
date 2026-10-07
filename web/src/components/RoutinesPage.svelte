@@ -3,7 +3,7 @@
   // Routines (定时触发) — a dedicated full-screen page: list of routines + a
   // claude.ai-styled New/Edit form. Wired to /api/routines (the bridge backend).
   // Schedule is the bridge's friendly preset {type:daily|weekdays|weekly|hourly,...}
-  // in GMT+8 — not cron. Palette here is intentionally black/white/gray (no accent).
+  // in the server's local timezone — not cron. Palette here is intentionally black/white/gray (no accent).
   import { caps, ui } from '../lib/state.svelte.js';
   import { api } from '../lib/api.js';
   import { registerCloser } from '../lib/nav.js';
@@ -21,6 +21,7 @@
   let items = $state([]);
   let running = $state([]);
   let loading = $state(true);
+  let serverTzOffsetMin = $state(null); // 服务端实际时区（getTimezoneOffset），由 /api/routines 下发
   let editing = $state(null);
   let enginePop = $state(false);
   let busy = $state(false);
@@ -42,7 +43,17 @@
   const engineLabel = $derived(`Claude · ${nameOf(modelList, fModel || defModel)} · ${nameOf(effortList, fEffort || defEffort)}`);
 
   const pad = (n) => String(n).padStart(2, '0');
-  // 钟点：中文保持 09:00；英文 12 小时制 9:00 AM（按 UTC 取值只为拿到 h:m 本身，时区是服务器 GMT+8）
+  // 服务端时区标签：由服务端下发的 getTimezoneOffset() 动态算出，不再写死 GMT+8。
+  // offMin：getTimezoneOffset()（UTC=0，GMT+8=-480）；返回如 GMT+8 / GMT-5 / GMT+5:30。
+  const tzLabel = (offMin) => {
+    if (!Number.isFinite(offMin)) return '…';
+    const mins = -offMin; // 超前 UTC 的分钟数
+    const sign = mins < 0 ? '-' : '+';
+    const a = Math.abs(mins), h = Math.floor(a / 60), m = a % 60;
+    return `GMT${sign}${h}${m ? ':' + String(m).padStart(2, '0') : ''}`;
+  };
+  const serverTzText = $derived(t('服务器时区 {tz}', { tz: tzLabel(serverTzOffsetMin) }));
+  // 钟点：中文保持 09:00；英文 12 小时制 9:00 AM（按 UTC 取值只为拿到 h:m 本身，实际时区以服务端下发的为准）
   const hm = (h, m) => (isEn() && Number.isFinite(+h) && Number.isFinite(+m)   // 非数字时 Intl 会抛错，退回原样拼
     ? new Intl.DateTimeFormat(locale(), { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' }).format(new Date(Date.UTC(2000, 0, 1, h, m)))
     : `${pad(h)}:${pad(m)}`);
@@ -64,7 +75,7 @@
   let listErr = $state('');
   async function load() {
     loading = true;
-    try { const d = await api.routines(); items = d.routines || []; running = d.running || []; listErr = ''; }
+    try { const d = await api.routines(); items = d.routines || []; running = d.running || []; serverTzOffsetMin = Number.isFinite(d.serverTzOffsetMin) ? d.serverTzOffsetMin : null; listErr = ''; }
     catch { listErr = t('加载失败：连不上服务器（列表可能不是最新）'); }
     loading = false;
   }
@@ -219,7 +230,7 @@
             {#each WEEKDAYS as [d, lbl]}<button class="pill {fSched.weekday === d ? 'on' : ''}" onclick={() => (fSched = { ...fSched, weekday: d })}>{lbl}</button>{/each}
           </div>
         {/if}
-        <div class="rt-when"><span>{t('时间')}</span><input class="rt-time" type="time" value={timeStr()} onchange={onTime} /><span class="dim">{t('服务器时区 GMT+8')}</span></div>
+        <div class="rt-when"><span>{t('时间')}</span><input class="rt-time" type="time" value={timeStr()} onchange={onTime} /><span class="dim">{serverTzText}</span></div>
       {/if}
 
       <label class="rt-label">{t('启用')}</label>

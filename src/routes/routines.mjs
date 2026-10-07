@@ -39,7 +39,9 @@ export function registerRoutineRoutes(router, { authOk, identify }) {
   router.on('GET', '/api/routines', (req, res) => {
     const ctx = requireCtx(identify, req, res); if (!ctx) return;
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ routines: routines.list(ctx.dataDir), running: [...routineRunning] }));
+    // serverTzOffsetMin：服务端实际时区（getTimezoneOffset：UTC=0，GMT+8=-480）。
+    // 前端据此显示"服务器时区"，不再写死 GMT+8。
+    res.end(JSON.stringify({ routines: routines.list(ctx.dataDir), running: [...routineRunning], serverTzOffsetMin: new Date().getTimezoneOffset() }));
   });
 
   router.on('POST', '/api/routines', async (req, res) => {
