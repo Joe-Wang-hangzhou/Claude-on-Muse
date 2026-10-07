@@ -33,6 +33,39 @@ export function pushBackLayer(fn) {
   return () => { const i = layerStack.indexOf(fn); if (i >= 0) layerStack.splice(i, 1); };
 }
 
+// —— 会话历史：每切一次会话往 history 记一条 { navSentinel, sess, proj }，浏览器前进/后退在会话间跳 ——
+// 只写 state 不改 URL。最底下页面原本那条（state 为 null）仍是「到底」，落到那儿照旧关层 + 补哨兵。
+let sessionNav = null;   // ClaudePage 注册：{ current() → {sess, proj}, open(st) }
+export function setSessionNav(nav) {
+  sessionNav = nav;
+  return () => { if (sessionNav === nav) sessionNav = null; };
+}
+const isSessEntry = (st) => !!st && st.sess !== undefined;
+const sessEntry = (s) => ({ navSentinel: 1, sess: s.sess || null, proj: s.proj || null });
+// 会话变化时调用：popstate 自己切过来的（history.state 已是它）不记；首次 / 空白新会话拿到 id 原地替换；其余新记一条。
+export function noteSession(sess, proj) {
+  if (typeof window === 'undefined') return;
+  sess = sess || null; proj = proj || null;
+  const cur = history.state;
+  try {
+    if (isSessEntry(cur) && cur.sess === sess && (sess || cur.proj === proj)) {
+      if (cur.proj !== proj) history.replaceState(sessEntry({ sess, proj }), '');   // 归属项目晚到：补上
+      return;
+    }
+    if (!isSessEntry(cur) || (cur.sess === null && sess && (!cur.proj || cur.proj === proj))) {
+      history.replaceState(sessEntry({ sess, proj }), '');
+    } else {
+      history.pushState(sessEntry({ sess, proj }), '');
+    }
+  } catch {}
+}
+
+// 有没有「返回该先关掉」的层（与 closeTopLayer 的浮层部分同序）
+function hasOpenLayer() {
+  return !!(ui.morphing || layerStack.length || preview.open || ui.settingsOpen
+    || ui.loginOpen || ui.routinesOpen || ui.drawerOpen);
+}
+
 // 关闭当前最顶层。返回 true=消费了这次返回；false=已在最底(根页)无层可关。顺序＝从最上层到最下层。
 function closeTopLayer() {
   // 页面转场播放中：吞掉返回（<1s 的动画，不打断演出）。
@@ -69,9 +102,22 @@ export function initNav() {
   inited = true;
   // 垫哨兵，之后任意系统返回都先落到这次 pushState 上、被 popstate 拦截。
   try { history.pushState({ navSentinel: 1 }, ''); } catch {}
-  window.addEventListener('popstate', () => {
+  window.addEventListener('popstate', (e) => {
+    const st = e.state;
+    if (isSessEntry(st) && sessionNav && ui.screen === 'claude') {
+      // 前进/后退落到一条会话记录：有浮层先关浮层（原地补回当前会话，这次之后没有「前进」）；否则切过去。
+      if (hasOpenLayer()) {
+        closeTopLayer();
+        try { history.pushState(sessEntry(sessionNav.current()), ''); } catch {}
+        return;
+      }
+      const cur = sessionNav.current();
+      if ((st.sess || null) !== (cur.sess || null) || (!st.sess && st.proj !== cur.proj)) sessionNav.open(st);
+      return;
+    }
     closeTopLayer();
-    // 补回哨兵——下次系统返回仍被拦，永不直接离开页面。
-    try { history.pushState({ navSentinel: 1 }, ''); } catch {}
+    // 补回哨兵——下次系统返回仍被拦，永不直接离开页面。在 Claude 页时带上当前会话，好让前进/后退认得它。
+    const cur = sessionNav && ui.screen === 'claude' ? sessionNav.current() : null;
+    try { history.pushState(cur ? sessEntry(cur) : { navSentinel: 1 }, ''); } catch {}
   });
 }
