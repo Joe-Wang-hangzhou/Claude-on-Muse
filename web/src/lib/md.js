@@ -165,7 +165,35 @@ function walkInlineHtml(list) {
   }
 }
 export const inlineHtmlGuard = { hooks: { processAllTokens(tokens) { walkInlineHtml(tokens); return tokens; } } };
-marked.use({ extensions: [cjkStrong, looseLink, soloTilde] }, inlineHtmlGuard);
+// —— 代码块语法高亮（聊天）——
+// 复用 DocViewer 那套 lezer 解析器 + mdHighlight 类表（mdeditor/hl.js 的同步字符串版）。hl.js 连带
+// CodeMirror 语言包，静态 import 会进启动 chunk，故同 katex 懒加载：模块到位 epoch++，各语言包
+// 到位再 epoch++（都在 .then 里，不会在模板求值中途改 state）。没就绪时返回 false 走 marked 默认单色。
+// 带 md-hl 类：配色作用域（app.css）只认它，不碰 DocViewer 的 .doc-md；data-hl 让 DocViewer 的
+// DOM 版高亮跳过已上色的块。
+let hlMod = null, hlPhase = 0;
+function ensureHl() {
+  if (hlPhase) return;
+  hlPhase = 1;
+  import('./mdeditor/hl.js')
+    .then((m) => { hlMod = m; hlPhase = 2; mdState.epoch++; })
+    .catch(() => { hlPhase = 0; });
+}
+const bumpEpoch = () => { mdState.epoch++; };
+export const codeHighlight = {
+  renderer: {
+    code({ text, lang, escaped, codeBlockStyle }) {
+      const l = (lang || '').match(/^\S*/)[0];
+      if (!l || escaped || codeBlockStyle === 'indented' || !/^[\w+#.-]+$/.test(l)) return false;
+      if (!hlMod) { ensureHl(); return false; }
+      const html = hlMod.highlightToHtml(String(text).replace(/\n$/, '') + '\n', l, bumpEpoch);
+      if (html == null) return false;
+      return `<pre><code class="language-${l} md-hl" data-hl="1">${html}</code></pre>\n`;
+    },
+  },
+};
+
+marked.use({ extensions: [cjkStrong, looseLink, soloTilde] }, inlineHtmlGuard, codeHighlight);
 
 // 只有真外链才新开（防 tab-nabbing）。内部链接（模型写的产物路径 / 同源 API）不加
 // target——由各渲染容器的 onMdClick 委托分流到应用内预览（lib/linkNav.js），加了 _blank
