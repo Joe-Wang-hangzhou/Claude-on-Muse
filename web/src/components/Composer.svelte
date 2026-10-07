@@ -16,6 +16,7 @@
   import { fileToBase64, filesFromInput, removeAttachment, uploadAttachment } from '../lib/attachments.js';
   import { untrack } from 'svelte';
   import { draft, registerComposerReader } from '../lib/composerBridge.svelte.js';
+  import { onDoubleEsc } from '../lib/shortcuts.js';
   import { t } from '../lib/i18n.js';
 
   let { placeholder = 'Type / for skills' } = $props();
@@ -232,6 +233,8 @@
   // 后台任务照跑。停后台任务走工作台「任务」页（逐条 ⏹ / 结束等待），不再只剩一个会连带杀掉它们的停止键。
   const holding = $derived(!!bgHoldNow());
   const busyNow = $derived(session.busy && !holding);
+  // 双击 Esc = 点停止按钮（只在这一轮正在跑时挂监听）
+  $effect(() => (busyNow ? onDoubleEsc(stop) : undefined));
 
   function submit() {
     if (uploading) return;   // 附件还在上传——发送按钮已是禁用态，等传完再发
