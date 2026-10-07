@@ -137,6 +137,33 @@ html[data-theme="light"]{
 .md-codecopy>svg{opacity:.55;transition:opacity .15s}
 .md-codecopy:hover>svg,.md-codecopy:focus-visible>svg,.md-codecopy.done>svg{opacity:1}
 .md-codecopy:active{transform:scale(.92)}
+/* 聊天代码块语法配色（lib/md.js 的 code renderer 产出 code.md-hl，类表同 mdeditor/theme.js 的
+   mdHighlight）。只认 .md-hl：DocViewer 的 .doc-md 走 mdrender.css 自己那套纸面色，互不干扰。
+   Flexoki 色系：默认暗色一套，html[data-theme="light"] 覆盖亮色（与 mdrender.css 同值）。 */
+.md-hl .mde-c-kw{color:#8b7ec8}
+.md-hl .mde-c-str{color:#879a39}
+.md-hl .mde-c-num{color:#da702c}
+.md-hl .mde-c-fn,.md-hl .mde-c-def{color:#4385be}
+.md-hl .mde-c-type{color:#3aa99f}
+.md-hl .mde-c-prop{color:#d0a215}
+.md-hl .mde-c-op{color:#9f9d96}
+.md-hl .mde-c-re{color:#d14d41}
+.md-hl .mde-t-cmt{color:#878580;font-style:italic}
+.md-hl .mde-t-fmt,.md-hl .mde-t-quote{color:var(--muted)}
+.md-hl .mde-t-url{color:#4385be}
+.md-hl .mde-t-strong,.md-hl .mde-t-h{font-weight:700}
+.md-hl .mde-t-em{font-style:italic}
+.md-hl .mde-t-strike{text-decoration:line-through}
+html[data-theme="light"] .md-hl .mde-c-kw{color:#5e409d}
+html[data-theme="light"] .md-hl .mde-c-str{color:#66800b}
+html[data-theme="light"] .md-hl .mde-c-num{color:#bc5215}
+html[data-theme="light"] .md-hl .mde-c-fn,html[data-theme="light"] .md-hl .mde-c-def{color:#205ea6}
+html[data-theme="light"] .md-hl .mde-c-type{color:#24837b}
+html[data-theme="light"] .md-hl .mde-c-prop{color:#ad8301}
+html[data-theme="light"] .md-hl .mde-c-op{color:#6f6e69}
+html[data-theme="light"] .md-hl .mde-c-re{color:#af3029}
+html[data-theme="light"] .md-hl .mde-t-cmt{color:#9a9891}
+html[data-theme="light"] .md-hl .mde-t-url{color:#205ea6}
 /* KaTeX 块级公式同理：katex 自带样式只有 display:block，长公式（大矩阵、连加）会直接
    溢出正文列。给它自己的横滚，overflow-y 保持 hidden 免得高分式旁边冒出竖滚条。 */
 .katex-display{overflow-x:auto;overflow-y:hidden;padding-bottom:2px}
