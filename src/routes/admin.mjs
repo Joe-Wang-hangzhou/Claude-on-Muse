@@ -292,7 +292,7 @@ export function registerAdminRoutes(router, { authOk, adminCredential = null, ad
   router.on('GET', '/api/admin/user/routines', async (req, res, url) => {
     if (!gate(req, res)) return; const uc = userCtx(url); if (!uc) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('no user'); return; }
     let list = []; try { list = (await import('../routines.mjs')).list(uc.ctx.dataDir); } catch {}
-    J(res, { user: uc.name, routines: list });
+    J(res, { user: uc.name, routines: list, serverTzOffsetMin: new Date().getTimezoneOffset() });
   });
 
 }
