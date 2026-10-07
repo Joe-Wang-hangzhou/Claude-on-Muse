@@ -33,6 +33,7 @@
   import { IS_PANE, SOLO_ID, PANE_MSG, isPaneMsg } from '../lib/solo.js';
   import { quoteSession } from '../lib/chatQuote.js';
   import { dockOverlayFor } from '../lib/claudeSplit.js';
+  import { onNewSessionKey } from '../lib/shortcuts.js';
   import { t, tc } from '../lib/i18n.js';
 
   // 'boot' 加载中 | 'login' 没登录（本页不带登录卡：主窗口登录后再拖一次即可）| 'ready'
@@ -87,6 +88,9 @@
       newConversation(d.projectId || undefined);   // 分屏时焦点在这一格、侧栏点了项目行
     }
   }
+
+  // ⌘⇧O / Ctrl+Shift+O：在这一格当前会话的项目里开新会话
+  $effect(() => onNewSessionKey(() => newConversation(session.projectId || undefined)));
 
   // 主题跟着宿主 / 其它窗口走：别处一切换，localStorage 的 storage 事件就到这儿
   function onStorage(e) {
