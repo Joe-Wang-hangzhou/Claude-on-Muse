@@ -163,7 +163,8 @@ export function deleteFollowup(key, sessionId, id, expectedVersion) {
   const a = arr(key, sessionId);
   const item = find(a, id);
   if (!item) return { ok: false, error: 'not_found' };
-  if (item.status !== STATUSES.QUEUED) return { ok: false, error: 'not_queued', item: { ...item } };
+  // FAILED 也允许删：它从没投递成功，用户在面板上看到失败原因后要能把它清掉。
+  if (item.status !== STATUSES.QUEUED && item.status !== STATUSES.FAILED) return { ok: false, error: 'not_queued', item: { ...item } };
   if (item.version !== expectedVersion) return { ok: false, error: 'conflict', item: { ...item } };
   const i = a.indexOf(item);
   if (i >= 0) a.splice(i, 1);

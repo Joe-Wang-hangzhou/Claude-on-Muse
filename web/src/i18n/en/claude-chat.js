@@ -151,6 +151,7 @@ export default {
   '立即引导（打断当前推进，把这条插进去）': 'Steer now (interrupt the live turn and inject this message)',
   '这条已经被执行或已变更': 'This message has already run or changed — the queue was refreshed',
   '保存失败，请重试': 'Couldn’t save — try again',
+  '加入队列失败，请重试': 'Couldn’t add to the queue — try again',
   '已注入当前轮': 'Injected into the live turn',
   '本轮已结束，已作为下一条执行': 'The turn already ended — it’ll run next instead',
   '正在等待你回答问题，暂不能注入': 'Waiting on your answer to a question — can’t steer right now',
