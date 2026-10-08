@@ -2,6 +2,7 @@
   import { uiAlert } from '../lib/dialogs.js';
   import { session, settings, caps, compose, status, prefs } from '../lib/state.svelte.js';
   import { send, stop, bgHoldNow } from '../lib/chat.svelte.js';
+  import { addToQueue, queueBusy } from '../lib/queue.svelte.js';
   import SlashMenu from './SlashMenu.svelte';
   import { loadCommands, filterCommands } from '../lib/slashCommands.js';
   import { api } from '../lib/api.js';
@@ -236,12 +237,25 @@
   // 双击 Esc = 点停止按钮（只在这一轮正在跑时挂监听）
   $effect(() => (busyNow ? onDoubleEsc(stop) : undefined));
 
-  function submit() {
+  // 忙时（busyNow）的 Enter / 发送键＝加入追问队列，不是真的「发送」：本轮还在跑，这条消息
+  // 走 POST /api/queue/add，排到队尾，服务端在本轮结束后自动派发（或面板里手动 Steer 提前插队）。
+  // 新会话还没有 session.id（首轮还在建立）时队列无处挂——维持旧行为（忙时按键不出效果）。
+  const queueAdding = $derived(session.id ? queueBusy[session.id] === 'add' : false);
+  async function submit() {
     if (uploading) return;   // 附件还在上传——发送按钮已是禁用态，等传完再发
     // innerText（非 textContent）：保留 contenteditable 里 <br>/<div> 代表的换行，
     // 多行 prompt / 粘贴的代码不再被压成一行。  是 contenteditable 的填充空格。
     const txt = (field?.innerText || '').replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-    if ((!txt && !compose.attachments.length) || busyNow) return;
+    if (!txt && !compose.attachments.length) return;
+    if (busyNow) {
+      if (!session.id || queueAdding) return;   // 新会话首轮没有 id：无处挂队列，维持原样不发
+      const atts = compose.attachments.slice();
+      field.textContent = '';
+      empty = true;
+      compose.attachments = [];
+      await addToQueue(session.id, txt, atts.map((a) => a.path).filter(Boolean));
+      return;
+    }
     field.textContent = '';
     empty = true;
     send(txt);
@@ -370,6 +384,10 @@
       </div>
       {#if busyNow}
         <button class="submit stop" aria-label={t('停止生成')} onclick={stop}><svg viewBox="0 0 20 20" width="13" height="13"><rect x="5" y="5" width="10" height="10" rx="2" fill="currentColor"/></svg></button>
+        <!-- 本轮还在跑：Enter/这颗键＝排队（本轮结束后自动执行），不是真的发送；停止键仍能随时打断本轮 -->
+        <button class="submit queue" aria-label={t('加入队列')} title={t('加入队列（本轮结束后执行）')} disabled={uploading || !session.id || queueAdding} onclick={submit}>
+          <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11M4 12h11M4 17h7"/><path d="M19 13v7M15.5 16.5 19 13l3.5 3.5"/></svg>
+        </button>
       {:else}
         <button class="submit" aria-label={uploading ? t('附件上传中') : t('发送')} disabled={uploading} onclick={submit}><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10 4 15l5 5"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></svg></button>
       {/if}
@@ -483,4 +501,7 @@
   .model-fast { color: var(--muted); }
   .submit { width: 38px; height: 38px; border-radius: 11px; background: var(--text); color: var(--bg); display: flex; align-items: center; justify-content: center; margin-left: 2px; }
   .submit.stop { border-radius: 11px; }
+  /* 忙时第二颗键（加入队列）：与「停止」同尺寸但走低调配色——停止才是这一刻的主动作 */
+  .submit.queue { background: var(--hover-strong, var(--hover)); color: var(--text); }
+  .submit.queue:disabled { opacity: .45; }
 </style>

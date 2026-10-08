@@ -133,6 +133,17 @@ export const api = {
   // 单条停止后台任务（任务面板每行的 ⏹）：走这一轮活着的控制通道，轮已结束会 409
   stopTask: (sessionId, taskId) => req('POST', '/api/claude/task/stop', { sessionId, taskId }),
 
+  // —— 追问队列（阶段 2）：忙时排队 + Steer 中途注入（见 src/routes/followups.mjs）——
+  // 读写状态全以服务端为准：这里只是薄封装，不做任何本地乐观修改（lib/queue.svelte.js 调用）。
+  queue: (sessionId) => req('GET', '/api/queue?session=' + encodeURIComponent(sessionId)),
+  queueAdd: (sessionId, content, attachments) => req('POST', '/api/queue/add',
+    { sessionId, content, ...(attachments && attachments.length ? { attachments } : {}) }),
+  queueEdit: (sessionId, id, version, patch) => req('POST', '/api/queue/edit', { sessionId, id, version, ...(patch || {}) }),
+  queueDelete: (sessionId, id, version) => req('POST', '/api/queue/delete', { sessionId, id, version }),
+  queueReorder: (sessionId, order, versions) => req('POST', '/api/queue/reorder', { sessionId, order, versions }),
+  queueSteer: (sessionId, id, version) => req('POST', '/api/queue/steer', { sessionId, id, version }),
+  queueContinue: (sessionId) => req('POST', '/api/queue/continue', { sessionId }),
+
   // —— 工作区人机协同上行（uiReport.js 专用）：视图上报 + 截图/草稿应答 ——
   uiState: (payload) => req('POST', '/api/ui/state', payload),
   uiAnswer: (id, result) => req('POST', '/api/ui/answer', { id, result }),
