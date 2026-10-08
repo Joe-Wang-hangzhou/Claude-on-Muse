@@ -10,6 +10,7 @@
   import ClaudeLogo from './ClaudeLogo.svelte';
   import ClaudeCodeWordmark from './claude/ClaudeCodeWordmark.svelte';
   import RefusalBand from './claude/RefusalBand.svelte';
+  import QueuePanel from './QueuePanel.svelte';
   import RoutinesPage from './RoutinesPage.svelte';
   import CustomizePage from './CustomizePage.svelte';
   import { api } from '../lib/api.js';
@@ -1170,6 +1171,8 @@
          输入栏底下穿过）；但它不受「滚到底才显形」约束：这是一条要人处理的通知，不是装饰。
          高度随内容进 .composer-wrap 的 ResizeObserver 量进 --composer-h，滚动区底衬自动加高。 -->
     <div class="band-slot"><RefusalBand sessionId={session.id} /></div>
+    <!-- 追问队列面板：快照访客没有这组接口（后端 403），不挂载，省一次必然失败的 GET -->
+    {#if !IS_CSNAP}<QueuePanel />{/if}
     <div class="composer-inner" bind:this={composerInnerEl} in:receiveComposer={{ key: 'composer' }} out:sendComposer={{ key: 'composer' }}><Composer placeholder={tc('claude', '发消息…')} /></div>
   </div>
 {/if}

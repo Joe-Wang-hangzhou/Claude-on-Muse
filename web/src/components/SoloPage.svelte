@@ -17,6 +17,7 @@
   import ClaudeLogo from './ClaudeLogo.svelte';
   import WorkspaceChips from './WorkspaceChips.svelte';
   import RefusalBand from './claude/RefusalBand.svelte';
+  import QueuePanel from './QueuePanel.svelte';
   import ClaudeDock from './dock/ClaudeDock.svelte';
   import MediaViewer from './preview/MediaViewer.svelte';
   import DragLayer from './DragLayer.svelte';
@@ -202,6 +203,7 @@
           <div class="composer-wrap" bind:this={composerWrapEl}>
             {#if showChips}<div class="chips-slot" class:foot={atBottom}><WorkspaceChips name={proj.name} /></div>{/if}
             <div class="band-slot"><RefusalBand sessionId={session.id} /></div>
+            <QueuePanel />
             <div class="composer-inner" bind:this={composerInnerEl}><Composer placeholder={tc('claude', '发消息…')} /></div>
           </div>
         {/if}
