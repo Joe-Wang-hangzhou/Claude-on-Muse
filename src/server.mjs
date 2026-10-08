@@ -21,6 +21,7 @@ import { installFatalGuard } from './runtime/fatal-guard.mjs';
 import { installLifeLog } from './runtime/lifelog.mjs';
 import { installLogRing } from './runtime/log-ring.mjs';
 import { initInflight } from './runtime/inflight.mjs';
+import { initFollowups } from './runtime/followups.mjs';
 import { initSessionStores } from './runtime/gen.mjs';
 import { initStatus } from './runtime/status.mjs';
 import { initCtxUsage } from './runtime/ctx-usage.mjs';
@@ -30,6 +31,7 @@ import { registerAdminRoutes } from './routes/admin.mjs';
 import { registerAuthRoutes } from './routes/auth.mjs';
 import { registerPairRoutes } from './routes/pair.mjs';
 import { registerChatRoutes } from './routes/chat.mjs';
+import { registerFollowupRoutes } from './routes/followups.mjs';
 import { registerUploadRoutes } from './routes/upload.mjs';
 import { registerSessionRoutes } from './routes/sessions.mjs';
 import { registerOverviewRoutes } from './routes/overview.mjs';
@@ -66,6 +68,7 @@ initSessionStores(ROOT);
 // 上一条命死在半途的轮：在它们的 transcript 上补一条「本轮被中断」，
 // 并记下标记供 /api/attach 当场把前端收敛掉。见 runtime/inflight.mjs。
 initInflight(ROOT);
+initFollowups(ROOT);   // 追问队列（每会话一份，followups.json）：见 runtime/followups.mjs
 
 // 出站代理必须在任何出站调用与子进程 spawn 之前定好：子进程只在 spawn 那一刻继承
 // process.env，晚一步就不生效。见 runtime/net-proxy.mjs。
@@ -127,6 +130,7 @@ registerAndroidAppRoutes(router);                             // /api/app/androi
 registerAuthRoutes(router, { adminCredential, adminGen, identify, getCookie, bearerToken, authCookie, clearAuthCookie, userCookie, clearUserCookie }); // /api/auth, /api/login, /api/register, /api/logout
 registerPairRoutes(router, { identify, adminGen, authCookie, userCookie }); // /api/pair/{new,wait,scan,approve,reject,claim} 扫码登录（扫码的一侧只认 admin/user 登录态）
 registerChatRoutes(router, { authOk, identify: identifySnap }); // /api/chat, /api/answer（快照身份可用）
+registerFollowupRoutes(router, { identify: identifySnap }); // /api/queue/*（快照身份在路由内部被拒）
 registerExtensionRoutes(router, { identify });                // /api/extensions* — 扩展中心（技能/连接器/插件，admin）
 registerAgentRoutes(router, { identify });                    // /api/agents — 设置「Agent」页：各 agent 的勾选 / 能跑 / 认证（admin，可远程）
 registerMeRoutes(router, { identify, getCookie, bearerToken }); // /api/me/{usage,password} — 用户自助：看自己的额度、改自己的密码

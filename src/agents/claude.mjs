@@ -15,6 +15,9 @@ import {
 } from '../runtime/gen.mjs';
 import { busPublish } from '../runtime/bus.mjs';
 import { beginInflight, endInflight } from '../runtime/inflight.mjs';
+import {
+  listQueue, claimNextQueued, requeueFront, markDelivered, markFailed, markSteered,
+} from '../runtime/followups.mjs';
 import { applyRateLimit, applyContext, applySdkUsage, classifyError, statusState } from '../runtime/status.mjs';
 import { normalizeContextUsage, applyContextUsage, normalizeEffortLevel, applyEffort, applyCommands, getCommands } from '../runtime/ctx-usage.mjs';
 import { setSuggestion, clearSuggestion, normalizeSuggestion } from '../runtime/suggestions.mjs';
@@ -407,6 +410,101 @@ function composeTurnPrompt(message, attachments) {
   // 而且它待在用户轮里，长对话压缩时不像 tool_result 那样先被摘掉。
   const imageBlocks = attachments.length ? nativeImageBlocks(attachments) : [];
   return { prompt, imageBlocks };
+}
+
+// ---- 追问队列：自动派发 + Steer（见 runtime/followups.mjs 顶部注释的整体设计）---------------
+
+// Steer 注入的前缀：告诉模型这不是新任务，而是中途调整——补充/修正就继续并调整当前任务，
+// 明确要求换任务才 pivot；已完成的操作不需要撤销。措辞沿用已回滚的 steer-queue.patch，适当精简。
+const STEER_PREFIX = '【Steer｜中途注入】这不是新的一轮，而是一条打断当前推进的调整指令。请结合你正在做的工作理解它：补充要求或修正就继续当前任务并调整；明确要求换任务才替换原目标。已完成的操作不需要撤销，从当前状态继续。\n\n';
+
+// 一个不挂在任何真实连接上的 SSE「哑」响应：自动派发 / 冷起续聊时没有 HTTP 请求可挂——
+// genSubscribe 只需要 writeHead/write/end/on('close') 这几个方法，事件照常进 gen.events 缓冲，
+// 真实客户端随后 /api/attach 照样能接上直播（见 gen.mjs genSubscribe、routes/overview.mjs attach）。
+function makeStubRes() {
+  return {
+    writableEnded: false,
+    writeHead() {},
+    write() { return true; },
+    end() { this.writableEnded = true; },
+    on() {},
+  };
+}
+
+// 把这个会话眼下的队列广播出去：gen 活着就走它的 SSE 事件通道（/api/attach 重放自动带上，
+// 因为它进了 gen.events 缓冲）；没有 gen（会话空闲、没人在跑）就走账号级事件总线，
+// 别的设备的会话列表/队列面板照样能收到。
+export function broadcastQueue(ctx, sessionId) {
+  if (!sessionId) return;
+  const queue = listQueue(ctx.key, sessionId);
+  const g = findGenBySession(ctx.key, sessionId);
+  if (g && !g.done) genEmit(g, { type: 'queue_updated', sessionId, queue });
+  else busPublish(ctx.key, { type: 'queue_updated', sessionId, queue });
+}
+
+// 自动派发：队首消息换到同一个 CLI（warm 停放）或冷起一个新 query（CLI 已退出）。
+// 不等本轮真正定局时（gen 活着、未 done）这里什么都不做——claude.mjs 主循环在 emitDone 之后、
+// parkWarm 之前会在同一个串行临界区里自己 claim 队首并 warmTake，不劳这个函数插手，也不会
+// 跟它打架（claimNextQueued 本身是原子的：谁先调用、谁先拿到队首）。
+// 这个函数负责另外两种情况：① 本轮刚好定局、CLI 还停放着，但没有新 HTTP 请求触发 warmTake；
+// ② CLI 已经退出（停放超时 / 从未停放）——这时没有进程可续，只能走正常的新开 query。
+export async function dispatchFollowupNow(ctx, sessionId) {
+  if (!sessionId) return { dispatched: false, reason: 'no_session' };
+  const live = findGenBySession(ctx.key, sessionId);
+  if (live && !live.done) return { dispatched: false, reason: 'turn_running' };
+  const lk = ctx.key + '|' + sessionId;
+  const w = warmRuns.get(lk);
+  if (w) {
+    const item = claimNextQueued(ctx.key, sessionId);
+    if (!item) return { dispatched: false, reason: 'empty' };
+    const stub = makeStubRes();
+    let took = false;
+    try { took = await w.take({ res: stub, message: item.content, attachments: item.attachments || [] }); } catch {}
+    if (took === true) {
+      markDelivered(ctx.key, sessionId, item.id);
+      broadcastQueue(ctx, sessionId);
+      return { dispatched: true, mode: 'warm' };
+    }
+    requeueFront(ctx.key, sessionId, item.id);
+    broadcastQueue(ctx, sessionId);
+    return { dispatched: false, reason: 'warm_race' };
+  }
+  // 没有在跑的 gen、没有停放的 CLI：会话彻底空闲。冷起一个新 query 续聊（resume sessionId）。
+  // 测试钩子：单元测试（node --test）绝不能真的 spawn SDK 子进程（本机内存/并发都顶不住，
+  // 也会打真实 API）——ctx.__testNoDispatch 让测试验证「claim/requeue 都对了」而不触发 query()。
+  // 只认这个精确字段，正常请求的 ctx（contextFor 产出）永远不带它。
+  if (ctx.__testNoDispatch) return { dispatched: false, reason: 'test_stub' };
+  const item = claimNextQueued(ctx.key, sessionId);
+  if (!item) return { dispatched: false, reason: 'empty' };
+  const stub = makeStubRes();
+  try {
+    await runClaudeChat(null, stub, {
+      message: item.content, sessionId, attachments: item.attachments || [], ctx, source: 'queue',
+    });
+    markDelivered(ctx.key, sessionId, item.id);
+  } catch (e) {
+    console.log('[claude] queue cold dispatch failed:', e && e.message);
+    markFailed(ctx.key, sessionId, item.id);
+  }
+  broadcastQueue(ctx, sessionId);
+  return { dispatched: true, mode: 'cold' };
+}
+
+// Steer：把队列里的一条消息原子地转成「中途注入」。
+//   - 有活着、未定局的 gen：委托给它挂的 g.steerInject（armGen 里挂的，见下方 runClaudeChat 内部）。
+//     它会自己判断能不能立刻 push 进 SDK 输入流，不能就回退到 QUEUED + 正常派发。
+//   - 没有 gen（本轮已彻底收尾退出）：直接退回 QUEUED 置于队首，交给正常派发——保证不管
+//     调用方在哪个时间点调用，这条消息【只会被执行一次】。
+export function steerFollowup(ctx, sessionId, id, expectedVersion) {
+  const g = findGenBySession(ctx.key, sessionId);
+  if (g && !g.done && typeof g.steerInject === 'function') {
+    return g.steerInject(id, expectedVersion);
+  }
+  const r = requeueFront(ctx.key, sessionId, id, expectedVersion);
+  if (!r.ok) return r;
+  broadcastQueue(ctx, sessionId);
+  dispatchFollowupNow(ctx, sessionId).catch(() => {});
+  return { ok: true, outcome: 'queued_as_next_turn' };
 }
 
 // 幻影 result：CLI 在 resume 时替上一条命的孤儿后台任务「补一轮」时吐出的 result（SDK 0.3.257 实测
@@ -1190,6 +1288,45 @@ export async function runClaudeChat(req, res, { message, sessionId, model, effor
       return true;
     };
 
+    // Steer：把队列里一条 QUEUED 消息原子地翻成 STEERED，再直接 push 进这个活着的输入流
+    // （不带 priority / 显式 'next' 都行——探针实测两者同效：下一个工具返回时并进当前轮；
+    // 这里用不带 priority 的默认形态，和挂起接力 handoff 的 push 用法一致，减少一种变体）。
+    // 三种拒绝 / 回退：
+    //   · 有 AskUserQuestion 或授权弹窗在等（sessionQuestions 有这个会话）→ 直接拒绝（failed）。
+    //     没有做真实 SDK 验证这个时间窗口的注入是否安全（见最终报告「遗留风险」）——这个状态下
+    //     CLI 正卡在 canUseTool 的 await 上，谁都不能保证输入流这时候被读取是安全的，宁可拒绝。
+    //   · 本轮已经在 held / 定局收尾的路上（heldResult/doneEmitted/bgFinalized/turnClosed/aborted）
+    //     → 退回 QUEUED 置于队首，交给正常派发（dispatchFollowupNow）——保证只执行一次。
+    const steerInject = (id, expectedVersion) => {
+      const sid = gen.sessionId;
+      if (sid && sessionQuestions.has(sid)) {
+        return { ok: true, outcome: 'failed', reason: 'awaiting_answer' };
+      }
+      if (heldResult || doneEmitted || bgFinalized || turnClosed || abort.signal.aborted) {
+        const r = requeueFront(ctx.key, sid, id, expectedVersion);
+        if (!r.ok) return r;
+        broadcastQueue(ctx, sid);
+        dispatchFollowupNow(ctx, sid).catch(() => {});
+        return { ok: true, outcome: 'queued_as_next_turn' };
+      }
+      const marked = markSteered(ctx.key, sid, id, expectedVersion);
+      if (!marked.ok) return marked;
+      const uuid = randomUUID();
+      const framed = STEER_PREFIX + (marked.item.content || '');
+      const next = composeTurnPrompt(framed, marked.item.attachments || []);
+      if (!turnInput.push(next.prompt, next.imageBlocks, uuid)) {
+        // 极端竞态：push 时输入流刚好已经释放——退回排队，交给正常派发，不丢消息。
+        requeueFront(ctx.key, sid, id);
+        broadcastQueue(ctx, sid);
+        dispatchFollowupNow(ctx, sid).catch(() => {});
+        return { ok: true, outcome: 'queued_as_next_turn' };
+      }
+      awaitingUser.add(uuid);
+      console.log(`[claude] steer injected into live turn (${uuid.slice(0, 8)})`);
+      broadcastQueue(ctx, sid);
+      return { ok: true, outcome: 'injected' };
+    };
+
     // 挂在 gen 上的控制口（/api/stop、任务面板 ⏹、同会话新消息都按会话找到当前 gen 来调）。
     function armGen(g) {
       g.stopTask = stopTask;
@@ -1197,6 +1334,7 @@ export async function runClaudeChat(req, res, { message, sessionId, model, effor
       g.interruptTurn = interruptTurn;
       g.hardStop = hardStop;
       g.handoff = handoff;
+      g.steerInject = steerInject;
     }
     armGen(gen);
 
@@ -1738,6 +1876,29 @@ export async function runClaudeChat(req, res, { message, sessionId, model, effor
           //（顺带收输入建议）。被接走就 continue 接着读新一轮；否则照旧收尾退出。快照访客不停放。
           if (!snap && !userStopped && !abort.signal.aborted) {
             closeTurn();
+            // 自动派发：本轮刚刚真正定局（这里走到，说明不是 held/awaitingUser/出错——那些分支
+            // 都在上面 continue 或走别的路径），在同一个串行临界区里原子地领取队首消息，用
+            // warmTake 同一套换 gen 手法续到这个还没退出的 CLI 上，不新开进程。领不到（极小概率的
+            // 并发槽竞态）就放回队首，落到下面 parkWarm 停放，等下一次触发（队列变更/手动续队列
+            // 都会再调 dispatchFollowupNow）。
+            const sidForQueue = msg.session_id || gen.sessionId;
+            let dispatched = false;
+            if (sidForQueue) {
+              const qItem = claimNextQueued(ctx.key, sidForQueue);
+              if (qItem) {
+                const stub = makeStubRes();
+                const took = warmTake({ res: stub, message: qItem.content, attachments: qItem.attachments || [], source: 'queue' });
+                if (took === 'taken') {
+                  markDelivered(ctx.key, sidForQueue, qItem.id);
+                  broadcastQueue(ctx, sidForQueue);
+                  dispatched = true;
+                } else {
+                  requeueFront(ctx.key, sidForQueue, qItem.id);
+                  broadcastQueue(ctx, sidForQueue);
+                }
+              }
+            }
+            if (dispatched) continue;
             if (await parkWarm(msg.session_id || gen.sessionId)) continue;
           }
         }
