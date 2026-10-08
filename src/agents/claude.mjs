@@ -510,9 +510,13 @@ export async function dispatchFollowupNow(ctx, sessionId) {
     model: dispatchModel, effort: dispatchEffort, fast: dispatchFast, chatPrefs: dispatchChatPrefs,
     ctx: resolved.ctx, source: 'queue',
   }).catch((e) => { console.log('[claude] queue cold dispatch turn failed:', e && e.message); });
-  const deadline = Date.now() + 4000;
+  // 不设固定时限：runClaudeChat 注册 gen 之前可能先等上一轮「停止中」的进程退干净（最多 10s），
+  // 固定 4s 会把其实随后起来、跑完了的消息误标 FAILED。改成「看到 gen 注册」或「runClaudeChat
+  // 已经返回（没起来就收场了：并发槽满 / 同会话忙 / 同步抛出）」二者先到为准。
+  let runSettled = false;
+  runP.then(() => { runSettled = true; });
   let started = false;
-  while (Date.now() < deadline) {
+  while (!runSettled) {
     if (findGenBySession(ctx.key, sessionId)) { started = true; break; }
     await sleep(25);
   }
@@ -521,8 +525,7 @@ export async function dispatchFollowupNow(ctx, sessionId) {
     broadcastQueue(ctx, sessionId);
     return { dispatched: true, mode: 'cold' };
   }
-  // 4s 内都没看到 gen 注册：大概率真没起来（并发槽满 / 同会话槽冲突 / query() 同步抛出）。
-  await runP;
+  // runClaudeChat 已返回且从没注册过 gen：确实没起来。
   markFailed(ctx.key, sessionId, item.id, 'cold_start_failed');
   broadcastQueue(ctx, sessionId);
   return { dispatched: false, reason: 'cold_start_failed' };
