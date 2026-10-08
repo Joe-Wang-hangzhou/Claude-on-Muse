@@ -71,6 +71,25 @@ export function initFollowups(root) {
       }
     }
   } catch { /* 坏文件起个空队列，别让启动失败 */ }
+  // 上一条命死在半途：DISPATCHING 只是「claim 到了，还没确认真正起了一轮」的瞬时态
+  // （见 agents/claude.mjs dispatchFollowupNow：现在是「轮确认起来了才 markDelivered」），
+  // 从没见过它被确认过——退回 QUEUED 置于队首最安全，不会丢也不会被当成已经执行过。
+  let changed = false;
+  for (const items of _store.values()) {
+    const dispatching = items.filter((x) => x.status === STATUSES.DISPATCHING).sort((a, b) => a.position - b.position);
+    if (!dispatching.length) continue;
+    const queuedMin = Math.min(0, ...items.filter((x) => x.status === STATUSES.QUEUED).map((x) => x.position));
+    let pos = queuedMin - dispatching.length;
+    for (const item of dispatching) {
+      item.status = STATUSES.QUEUED;
+      item.position = pos++;
+      item.version += 1;
+      item.error = null;
+      item.updatedAt = Date.now();
+      changed = true;
+    }
+  }
+  if (changed) persist();
 }
 
 function arr(key, sessionId) {
@@ -116,6 +135,7 @@ export function enqueueFollowup(key, sessionId, { content, attachments } = {}) {
     status: STATUSES.QUEUED,
     position: nextPosition(a),
     version: 1,
+    error: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -190,15 +210,18 @@ export function claimNextQueued(key, sessionId) {
   return { ...head };
 }
 
-export function markDelivered(key, sessionId, id) { return setTerminal(key, sessionId, id, STATUSES.DELIVERED); }
-export function markFailed(key, sessionId, id) { return setTerminal(key, sessionId, id, STATUSES.FAILED); }
-export function markCancelled(key, sessionId, id) { return setTerminal(key, sessionId, id, STATUSES.CANCELLED); }
+export function markDelivered(key, sessionId, id) { return setTerminal(key, sessionId, id, STATUSES.DELIVERED, null); }
+// reason：失败原因（项目路径解析失败 / 冷启动没能真正起一轮等），落进 item.error，队列面板能
+// 直接显示「为什么失败」而不是只有一个光秃秃的 FAILED。
+export function markFailed(key, sessionId, id, reason) { return setTerminal(key, sessionId, id, STATUSES.FAILED, reason ?? null); }
+export function markCancelled(key, sessionId, id) { return setTerminal(key, sessionId, id, STATUSES.CANCELLED, null); }
 
-function setTerminal(key, sessionId, id, status) {
+function setTerminal(key, sessionId, id, status, error) {
   const a = arr(key, sessionId);
   const item = find(a, id);
   if (!item) return { ok: false, error: 'not_found' };
   item.status = status;
+  item.error = error ?? null;
   item.version += 1;
   item.updatedAt = Date.now();
   trimTerminal(a);
@@ -238,6 +261,7 @@ export function requeueFront(key, sessionId, id, expectedVersion) {
   item.status = STATUSES.QUEUED;
   item.position = min - 1;
   item.version += 1;
+  item.error = null;   // 重新派发是全新的一次尝试，别带着上一次（如果有）的失败原因
   item.updatedAt = Date.now();
   persist();
   return { ok: true, item: { ...item } };
