@@ -83,8 +83,8 @@ export default {
   '每天 {time}': 'Daily at {time}',
   '工作日 {time}': 'Weekdays at {time}',
   '每周 {time}': 'Weekly at {time}',
-  '调度器只在生产实例跑（30s tick，{tz} 预设频率）；宕机错过的触发顺延不补跑。编辑路由请到该用户自己的「定时触发」页。':
-    'The scheduler runs only on the production instance (checks every 30 sec; preset schedules use {tz}). Runs missed while the server is down aren’t made up; the routine picks up at its next scheduled time. To edit routines, use the Routines page in that user’s own account.',
+  '调度器只在生产实例跑（30s tick，GMT+8 预设频率）；宕机错过的触发顺延不补跑。编辑路由请到该用户自己的「定时触发」页。':
+    'The scheduler runs only on the production instance (checks every 30 sec; preset schedules use GMT+8). Runs missed while the server is down aren’t made up; the routine picks up at its next scheduled time. To edit routines, use the Routines page in that user’s own account.',
 
   // —— 服务端控制台 · 媒体（SaMedia）——
   '图片': 'Image',

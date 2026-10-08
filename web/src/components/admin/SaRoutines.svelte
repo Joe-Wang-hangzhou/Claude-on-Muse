@@ -7,7 +7,6 @@
   let user = $state('admin');
   let list = $state([]);
   let loading = $state(true);
-  let serverTzOffsetMin = $state(null); // 服务端实际时区，由 /api/routines 下发
   const userList = $derived([{ name: 'admin' }, ...sa.users]);
 
   $effect(() => { sa.tick; user; load(); });
@@ -18,20 +17,11 @@
         ? await api.get('/api/routines')
         : await api.get('/api/admin/user/routines?name=' + encodeURIComponent(user));
       list = d?.routines || [];
-      serverTzOffsetMin = Number.isFinite(d?.serverTzOffsetMin) ? d.serverTzOffsetMin : null;
     } catch { list = []; }
     loading = false;
   }
 
   const pad = (n) => String(n || 0).padStart(2, '0');
-  // 服务端时区标签（getTimezoneOffset 动态算出，不写死 GMT+8；与 RoutinesPage 同逻辑）
-  const tzLabel = (offMin) => {
-    if (!Number.isFinite(offMin)) return '…';
-    const mins = -offMin;
-    const sign = mins < 0 ? '-' : '+';
-    const a = Math.abs(mins), h = Math.floor(a / 60), m = a % 60;
-    return `GMT${sign}${h}${m ? ':' + String(m).padStart(2, '0') : ''}`;
-  };
   // 钟点：中文照旧 HH:mm；英文按 en-US 12 小时制（2:30 PM）
   const hm = (h, m) => isEn()
     ? new Date(2000, 0, 1, h || 0, m || 0).toLocaleTimeString(locale(), { hour: 'numeric', minute: '2-digit' })
@@ -85,7 +75,7 @@
     <div style="height:8px"></div>
   {/if}
 </div>
-<div class="sa-foot">{t('调度器只在生产实例跑（30s tick，{tz} 预设频率）；宕机错过的触发顺延不补跑。编辑路由请到该用户自己的「定时触发」页。', { tz: tzLabel(serverTzOffsetMin) })}</div>
+<div class="sa-foot">{t('调度器只在生产实例跑（30s tick，GMT+8 预设频率）；宕机错过的触发顺延不补跑。编辑路由请到该用户自己的「定时触发」页。')}</div>
 
 <style>
   .rcols { grid-template-columns: minmax(110px, 1fr) 92px 110px 70px 84px minmax(140px, 1.3fr); }

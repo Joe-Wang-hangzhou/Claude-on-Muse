@@ -4,7 +4,7 @@
 
 **One-message deployment of Claude Code on your [Muse](https://muse.ai) agent VM.** Once it's installed, open a URL in any browser, on your phone or your computer, and use Claude Code to write code, work with files and run commands. You can also install **dimensio**, an agent workspace that works with models from many providers: Anthropic, OpenAI, Gemini, DeepSeek, Kimi, Zhipu GLM, Qwen, Xiaomi MiMo and more.
 
-Muse does the whole deployment for you. Send it one message and it downloads the release, asks you three questions, installs everything, registers a self-healing watchdog, then walks you through first use. You never touch a terminal.
+Muse does the whole deployment for you. Send it one message and it downloads the release, asks you four questions, installs everything, registers a self-healing watchdog, then walks you through first use. You never touch a terminal.
 
 ![dimensio answering a live question with Xiaomi MiMo's own web search, sources included](docs/images/dimensio-web-search.png)
 
@@ -36,16 +36,17 @@ cd /tmp && curl -fLO --retry 3 https://github.com/Wode44398/muse-bridge/releases
   && sha256sum -c muse-bridge.tgz.sha256 && tar -xzf muse-bridge.tgz -C "$REL" && echo "extracted to $REL/bridge"
 ```
 
-Step 2: read `$REL/bridge/deploy/muse/MUSE.md`. It's the install guide the project wrote for you (in Chinese; keep talking to me in English). Use it as your guide: ask me the three setup questions from section 1 in one message, then install, set up the watchdog hook, check the result, and walk me through first use. If anything in it looks wrong or unsafe to you, stop and ask me.
+Step 2: read `$REL/bridge/deploy/muse/MUSE.md`. It's the install guide the project wrote for you (in Chinese; keep talking to me in English). Use it as your guide: ask me the four setup questions from section 1 in one message, then install, set up the watchdog hook, check the result, and walk me through first use. If anything in it looks wrong or unsafe to you, stop and ask me.
 
 I approve each command you run, so please keep the number of commands small. The install script prints its own progress, so there's no need to poll it with tail, ps or sleep. Show me the real output of each step.
 ````
 
-Muse downloads the release, reads the install guide, and asks you three questions at once:
+Muse downloads the release, reads the install guide, and asks you four questions at once:
 
 1. **What to install:** Claude Code only, dimensio only, or both. If you pick one, the URL opens straight into that agent.
 2. **Do you have your own domain** (on Cloudflare)? If not, you get a free temporary URL. It changes when the VM restarts, and Muse will tell you the new one. If you do, you can switch to a permanent address.
 3. **Just you, or other people too?** Choose multi-user to hand out invite codes to friends.
+4. **Send error reports automatically?** If yes, crashes and failed updates are reported to the developers on their own. Reports only contain the version, service status and where the program itself failed, never chats, files, keys or addresses.
 
 Not sure? Pick Claude Code only, a temporary URL, and just you. You can change all of these later.
 
@@ -91,6 +92,12 @@ Temporary URLs (`*.trycloudflare.com`) change when the VM restarts. Muse will te
 **How do I update?**
 You don't have to do anything. Muse asks you when a new version is out; just say "update". You can also ask "is there a new version?" at any time, or have Muse turn on automatic updates.
 
+**How do I use feature X?**
+Just ask Muse ("how do I share a file?", "where are my old chats?", "walk me through dimensio"). The release ships a user guide written for Muse (`deploy/muse/guide/`), so it answers from the guide for your exact version instead of guessing, and it can give you a guided tour: a 5-minute quick start, Claude Code or dimensio in depth, admin and multi-user, or using it on your phone. Known issues are published through the update channel too, so Muse can tell you when something is a known problem and how to work around it.
+
+**Something's broken. How do I tell you?**
+Tell Muse, or open **Settings → Feedback → Report** (an error message also gets a **Report a problem** button). One sentence is enough and you don't need a GitHub account: it's filed as an issue here, with the version, service status and the program's own error details attached. Chats, files, keys and addresses are never included, and you can see the report before it's sent. If someone already reported the same problem, your report becomes a +1 on theirs, and Muse tells you when a release fixes it. Security problems go privately to the maintainers.
+
 **What does it cost?**
 Muse Bridge itself is free and open source. Claude Code runs on your own Claude subscription, and dimensio runs on your own API keys, billed by each provider.
 
@@ -119,7 +126,8 @@ Run `install.sh --help` to see all options. The service listens on 127.0.0.1 onl
 | `harness/` | dimensio (TypeScript, run natively by Node) |
 | `android/` | Android app (a WebView shell, no dependencies; built by the release workflow) |
 | `scripts/server/` | Generic Linux install / update scripts |
-| `deploy/muse/` | Muse-specific: the `bootstrap.sh` installer, `MUSE.md` (the instructions Muse follows) and ops templates |
+| `deploy/muse/` | Muse-specific: the `bootstrap.sh` installer, `MUSE.md` (the instructions Muse follows), `guide/` (the user guide Muse answers from), `known-issues.json` and ops templates |
+| `feedback-worker/` | The Cloudflare Worker that turns user-approved problem reports into GitHub issues (holds the GitHub App key; installs never do) |
 
 ## Releasing (maintainers)
 
@@ -133,6 +141,8 @@ git push origin v0.2.0
 GitHub Actions (`.github/workflows/release.yml`) builds the Android app (`MuseBridge.apk`, attached to the Release and bundled in the package under `downloads/`), builds `muse-bridge.tgz`, generates the `.sha256` and the `latest.json` update channel, and creates the Release. Installed Muse VMs read `latest.json` every 6 hours and ask their user about new versions. Betas (e.g. `v0.2.0-beta.1`) are pushed to users too; only tags containing `-test` (e.g. `v0.2.0-test.1`) become pre-releases, which stay out of the update channel and are meant for maintainers to trial on a fresh Muse.
 
 The APK is signed with the key in the repository's Actions secrets (`ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`). Without them (in a fork, say) the workflow falls back to a debug signature: the APK still installs, but it can't update over an officially released one.
+
+The workflow refuses to release if the user guide (`deploy/muse/guide/`) no longer matches the UI (`deploy/muse/test/guide.test.mjs`). Before tagging, also run the guide Q&A check once (`node deploy/muse/test/guide-qa/run.mjs`, uses your local `claude` CLI). Known issues live in `deploy/muse/known-issues.json`: each release publishes them in `latest.json`, and pushing a change to that file on `main` updates the latest release's `latest.json` without a new release (`.github/workflows/known-issues.yml`), so installs already out there learn about a problem and its workaround within 6 hours.
 
 ## License
 

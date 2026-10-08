@@ -4,7 +4,6 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { mdState } from './mdState.svelte.js';
 import { t as tt } from './i18n.js';   // 本文件循环变量多叫 t（表格/列表节点），翻译函数用别名
-import { mermaidLookup } from './mermaid.js';
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -166,75 +165,7 @@ function walkInlineHtml(list) {
   }
 }
 export const inlineHtmlGuard = { hooks: { processAllTokens(tokens) { walkInlineHtml(tokens); return tokens; } } };
-// —— 代码块语法高亮（聊天）——
-// 复用 DocViewer 那套 lezer 解析器 + mdHighlight 类表（mdeditor/hl.js 的同步字符串版）。hl.js 连带
-// CodeMirror 语言包，静态 import 会进启动 chunk，故同 katex 懒加载：模块到位 epoch++，各语言包
-// 到位再 epoch++（都在 .then 里，不会在模板求值中途改 state）。没就绪时返回 false 走 marked 默认单色。
-// 带 md-hl 类：配色作用域（app.css）只认它，不碰 DocViewer 的 .doc-md；data-hl 让 DocViewer 的
-// DOM 版高亮跳过已上色的块。
-let hlMod = null, hlPhase = 0;
-function ensureHl() {
-  if (hlPhase) return;
-  hlPhase = 1;
-  import('./mdeditor/hl.js')
-    .then((m) => { hlMod = m; hlPhase = 2; mdState.epoch++; })
-    .catch(() => { hlPhase = 0; });
-}
-const bumpEpoch = () => { mdState.epoch++; };
-export const codeHighlight = {
-  renderer: {
-    code({ text, lang, escaped, codeBlockStyle }) {
-      const l = (lang || '').match(/^\S*/)[0];
-      if (!l || escaped || codeBlockStyle === 'indented' || !/^[\w+#.-]+$/.test(l)) return false;
-      if (!hlMod) { ensureHl(); return false; }
-      const html = hlMod.highlightToHtml(String(text).replace(/\n$/, '') + '\n', l, bumpEpoch);
-      if (html == null) return false;
-      return `<pre><code class="language-${l} md-hl" data-hl="1">${html}</code></pre>\n`;
-    },
-  },
-};
-
-// —— Mermaid 图表（聊天 + DocViewer 共用，obsmd 也 use 这一只）——
-// ```mermaid 块：缓存命中出图（.md-mermaid 容器：SVG + 隐藏的源码 pre + 切换/复制按钮），未命中或
-// 仍在流式（未闭合围栏，renderMarkdown 补过结尾）就照常出源码代码块，后台渲完 epoch++ 换图。
-// 「哪块没闭合」renderer 里拿不到：围栏补在 parse 之前，补上的必是文档里最后一个 code token，
-// 故 walkTokens 记下最后一个 code token，renderer 比对身份。
-// SVG 不进 HTML 字符串走全局 sanitize（默认规则会二次处理 SVG 内 <style>），而是先出占位 div，
-// sanitize 之后由 mermaidFill 换成 mermaid.js 已按 svg profile 净化过的 SVG。
-const mmd = { open: false, last: null, theme: null, slots: new Map() };
-let mmdSeq = 0;
-export function mermaidBegin(open, theme = null) { mmd.open = open; mmd.last = null; mmd.theme = theme; mmd.slots = new Map(); }
-export function mermaidFill(html) {
-  if (!mmd.slots.size) return html;
-  const slots = mmd.slots;
-  mmd.slots = new Map();
-  return html.replace(/<div data-mmd-slot="(\d+)"><\/div>/g, (m, k) =>
-    slots.has(k) ? '<div class="md-mermaid-svg">' + slots.get(k) + '</div>' : m);
-}
-const ICON_SRC = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 6l-4 4 4 4M13 6l4 4-4 4"/></svg>';
-export const mermaidExt = {
-  walkTokens(tk) { if (tk.type === 'code') mmd.last = tk; },
-  renderer: {
-    code(tk) {
-      if (!/^mermaid$/i.test((tk.lang || '').trim())) return false;
-      if (mmd.open && tk === mmd.last) return false;   // 还在流式写，图法不完整，先看源码
-      const src = String(tk.text).trim();
-      if (!src) return false;
-      const r = mermaidLookup(src, mmd.theme);
-      const srcPre = '<pre class="md-mermaid-src"><code class="language-mermaid">' + escapeHtml(src) + '\n</code></pre>';
-      if (!r) return false;
-      if (r.error) return '<pre><code class="language-mermaid">' + escapeHtml(src) + '\n</code></pre>\n'
-        + '<div class="md-mermaid-err">' + escapeHtml(tt('图表渲染失败：{msg}', { msg: r.error })) + '</div>\n';
-      const k = String(++mmdSeq);
-      mmd.slots.set(k, r.svg);
-      return '<div class="md-mermaid" data-view="svg"><div data-mmd-slot="' + k + '"></div>' + srcPre
-        + '<button type="button" class="md-mmd-toggle" aria-label="' + tt('切换图表 / 源码') + '" title="' + tt('切换图表 / 源码') + '">' + ICON_SRC + '</button>'
-        + '<button type="button" class="md-codecopy" aria-label="' + tt('复制代码') + '" title="' + tt('复制') + '">' + ICON_COPY + '</button></div>\n';
-    },
-  },
-};
-
-marked.use({ extensions: [cjkStrong, looseLink, soloTilde] }, inlineHtmlGuard, codeHighlight, mermaidExt);
+marked.use({ extensions: [cjkStrong, looseLink, soloTilde] }, inlineHtmlGuard);
 
 // 只有真外链才新开（防 tab-nabbing）。内部链接（模型写的产物路径 / 同源 API）不加
 // target——由各渲染容器的 onMdClick 委托分流到应用内预览（lib/linkNav.js），加了 _blank
@@ -314,16 +245,14 @@ export function renderMarkdown(src) {
   // 渲染前补一个闭合 fence，让"代码块进行中"正确显示为代码块（claude.ai 同款行为）。
   // 只数行首 fence——正文行内提及 ``` 不算（否则误补出一个空代码块）。
   let text = String(src);
-  const open = ((text.match(/^[ \t]*```/gm) || []).length) % 2 === 1;
-  if (open) text += '\n```';
+  if (((text.match(/^[ \t]*```/gm) || []).length) % 2 === 1) text += '\n```';
   if (!katexPhase && hasMath(text)) ensureKatex();   // 已在加载/已就绪就连扫描都省掉
-  mermaidBegin(open);
   let html;
   try { html = marked.parse(text, { async: false }); }
   catch { return '<pre>' + escapeHtml(text) + '</pre>'; }   // 解析崩溃也别吞内容
   // KaTeX 的 MathML 部分（无障碍朗读 / 可复制 LaTeX 源）用 <semantics>/<annotation>，
   // 不在 DOMPurify 默认 MathML 白名单里——补上，否则被剥得只剩裸露的 LaTeX 文本节点。
-  const clean = mermaidFill(DOMPurify.sanitize(html, { ADD_TAGS: ['semantics', 'annotation'], ADD_ATTR: ['encoding'], ALLOWED_URI_REGEXP: URI_OK }));
+  const clean = DOMPurify.sanitize(html, { ADD_TAGS: ['semantics', 'annotation'], ADD_ATTR: ['encoding'], ALLOWED_URI_REGEXP: URI_OK });
   return clean.includes('<table') || clean.includes('<pre') ? decorate(clean) : clean;
 }
 // DOMPurify 默认的 URI 白名单 + Windows 盘符路径（C:/… 与 encodeURI 后的 C:%5C…）。默认表把「C:」当成
@@ -366,7 +295,7 @@ const ICON_COPY = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" s
 const ICON_DONE = '<svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 10.5l3.5 3.5 7.5-8"/></svg>';
 function wrapCode(root) {
   for (const pre of root.querySelectorAll('pre')) {
-    if (pre.parentElement?.classList.contains('md-codewrap') || pre.classList.contains('md-mermaid-src')) continue;   // mermaid 容器自带按钮
+    if (pre.parentElement?.classList.contains('md-codewrap')) continue;
     const wrap = document.createElement('div');
     wrap.className = 'md-codewrap';
     pre.replaceWith(wrap);
@@ -387,14 +316,6 @@ async function copyText(t) {
 }
 // 捕获阶段接：渲染容器上的 onclick（onMdClick 等）或中途 stopPropagation 都挡不住它。
 if (typeof document !== 'undefined') {
-  // mermaid 图 ⇄ 源码切换（状态只在 DOM 上：重渲染后回到出图，够用）
-  document.addEventListener('click', (e) => {
-    const btn = e.target?.closest?.('.md-mmd-toggle');
-    if (!btn) return;
-    e.preventDefault();
-    const box = btn.closest('.md-mermaid');
-    if (box) box.dataset.view = box.dataset.view === 'src' ? 'svg' : 'src';
-  }, true);
   document.addEventListener('click', (e) => {
     const btn = e.target?.closest?.('.md-codecopy');
     if (!btn) return;

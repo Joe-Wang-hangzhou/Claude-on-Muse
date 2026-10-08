@@ -8,7 +8,7 @@
 // 渲染结果的排版在 mdrender.css（阅读态 .doc-md 与编辑态 callout 卡共用一份），随本模块注入。
 import { Marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { cjkStrong, soloTilde, inlineHtmlGuard, hasMath, ensureKatex, registerKatexTarget, mermaidExt, mermaidBegin, mermaidFill } from './md.js';
+import { cjkStrong, soloTilde, inlineHtmlGuard, hasMath, ensureKatex, registerKatexTarget } from './md.js';
 import { mdState } from './mdState.svelte.js';
 import { t as tt } from './i18n.js';   // 本文件局部变量大量叫 t（token/目标名），翻译函数用别名
 import './mdrender.css';
@@ -347,7 +347,6 @@ mk.use({
   extensions: [cjkStrong, soloTilde, wikilink, obsTag, obsMark, obsComment, footnoteDef, footnoteRef, nbMark], renderer,
   hooks: { processAllTokens(tokens) { markTight(tokens, false); return tokens; } },
 }, inlineHtmlGuard);   // 不配对的行内标签当字面文本（见 md.js）
-mk.use(mermaidExt);   // ```mermaid 出图（与聊天同一只扩展，见 md.js；后 use 的 renderer 先试）
 
 // ============================== callout ==============================
 const SI = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
@@ -451,7 +450,7 @@ function transformDoc(root) {
 // ============================== 主渲染 ==============================
 const PURIFY = { ADD_TAGS: ['semantics', 'annotation'], ADD_ATTR: ['encoding'] };
 function finish(html) {
-  html = mermaidFill(DOMPurify.sanitize(html, PURIFY));   // mermaid 的 SVG 在 sanitize 之后填回（见 md.js）
+  html = DOMPurify.sanitize(html, PURIFY);
   const tpl = document.createElement('template');
   tpl.innerHTML = html;
   try { transformDoc(tpl.content); } catch {}
@@ -464,9 +463,7 @@ export function renderObsMarkdown(src, { embedUrl = null, footnotes = null } = {
   void mdState.epoch;                       // 建立响应式依赖（勿删）：katex 到位后重渲，见 mdState.svelte.js
   if (!src) return '';
   let text = String(src);
-  const open = ((text.match(/^[ \t]*```/gm) || []).length) % 2 === 1;
-  if (open) text += '\n```';   // 未闭合围栏补齐（同 md.js）
-  mermaidBegin(open, 'default');   // DocViewer 固定浅色纸面
+  if (((text.match(/^[ \t]*```/gm) || []).length) % 2 === 1) text += '\n```';   // 未闭合围栏补齐（同 md.js）
   if (hasMath(text)) ensureKatex();                                             // 见到公式才拉 katex（hasMath 内部已短路，同 md.js）
   const whole = !footnotes;
   const fn = footnotes || scanFootnotes(text);

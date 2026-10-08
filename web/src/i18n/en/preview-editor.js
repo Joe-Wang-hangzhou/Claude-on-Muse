@@ -127,8 +127,6 @@ export default {
   '数学块': 'Math block',
   '开始书写…': 'Start writing…',
   '复制代码': 'Copy code',
-  '切换图表 / 源码': 'Toggle diagram / source',
-  '图表渲染失败：{msg}': 'Diagram failed to render: {msg}',
 
   // —— Markdown 编辑器：[[ 笔记名补全 ——
   '目录太大，只列出了一部分笔记': 'Folder too large — showing only some notes',

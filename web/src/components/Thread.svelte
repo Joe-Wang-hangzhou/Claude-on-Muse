@@ -304,12 +304,6 @@
             </div>
           {/if}
           {#if m.text}<div class="bubble sel-text">{m.text}</div>{/if}
-          {#if m.inject === 'steer'}
-            <!-- Steer（中途注入）：服务端把队列里的这条消息原地塞进了正在跑的输入流，不是正常
-                 新开一轮——徽标说明这条话是怎么被执行的（见 lib/chat.svelte.js 的 applyQueueSnapshot /
-                 stripSteerPrefix：直播靠队列事件合成气泡，历史靠剥前缀还原）。 -->
-            <div class="u-inject"><span class="u-inject-dot"></span>{t('已引导')}</div>
-          {/if}
           {#if m.uuid && !IS_CSNAP}
             <div class="u-acts">
               {#if m.__rw === 'confirm'}
@@ -513,9 +507,6 @@
   .u-chat-sub { font-size: 11.5px; color: var(--muted); }
   .bubble { background: var(--userbubble); color: var(--text); border-radius: 14px; padding: 10px 15px; font-size: 15px; line-height: 1.5; max-width: 100%; word-break: break-word; white-space: pre-wrap; animation: popIn .28s cubic-bezier(.22,1,.36,1); }
   @keyframes popIn { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
-  /* Steer 徽标：小圆点 + 「已引导」，挂在气泡下方（与检查点回滚一排共用右对齐列） */
-  .u-inject { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
-  .u-inject-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent, var(--coral)); }
   .turn-assistant { margin: 6px 0 22px; }
 
   .think { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; margin-bottom: 10px; }

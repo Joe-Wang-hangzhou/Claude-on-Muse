@@ -9,45 +9,6 @@ import { mdHighlight } from './theme.js';
 
 const MAX = 20000;   // 超长代码块不高亮：整块同步解析会卡主线程，单色也能读
 
-// —— 同步字符串版（聊天 md.js 的 code renderer 用）——
-// 聊天正文是 {@html renderMarkdown(块)}，流式尾巴块每 tick 整块重建 DOM，事后改 DOM 的上色会被冲掉，
-// 所以要在出 HTML 字符串时就带上 span。parse/highlightCode 本身同步，只有语言包加载是异步：
-// 没就绪返回 null（调用方先出单色），加载完调 onReady（md.js 在里面 epoch++ 触发重渲）。
-const langs = new Map();   // 小写语言名 → { support } | 'loading' | null(不支持/加载失败)
-const htmlCache = new Map();
-const CACHE_MAX = 300;
-const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-export function highlightToHtml(text, lang, onReady) {
-  if (!text || text.length > MAX) return null;
-  const key = String(lang).toLowerCase();
-  const st = langs.get(key);
-  if (st === undefined) {
-    const desc = LanguageDescription.matchLanguageName(languages, key, true);
-    if (!desc) { langs.set(key, null); return null; }
-    langs.set(key, 'loading');
-    desc.load().then(
-      (support) => { langs.set(key, { support }); onReady?.(); },
-      () => langs.set(key, null),
-    );
-    return null;
-  }
-  if (!st || st === 'loading') return null;
-  const ck = key + '\0' + text;
-  const hit = htmlCache.get(ck);
-  if (hit !== undefined) return hit;
-  let out = '';
-  try {
-    const tree = st.support.language.parser.parse(text);
-    highlightCode(text, tree, mdHighlight,
-      (s, cls) => { out += cls ? '<span class="' + cls + '">' + esc(s) + '</span>' : esc(s); },
-      () => { out += '\n'; });
-  } catch { return null; }
-  if (htmlCache.size >= CACHE_MAX) htmlCache.delete(htmlCache.keys().next().value);
-  htmlCache.set(ck, out);
-  return out;
-}
-
 // codeEl：<code class="language-xx">；高亮成功后打 data-hl，重复调用直接跳过
 export async function highlightPre(codeEl) {
   if (!codeEl || codeEl.dataset.hl) return;

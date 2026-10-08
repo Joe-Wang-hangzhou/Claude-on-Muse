@@ -12,16 +12,16 @@
 //   harness/            — dimensio, spawned per user and reverse-proxied by routes/harness.mjs
 
 import http from 'node:http';
+import path from 'node:path';
 import { PORT, TOKEN, TOKEN_HASH, VAULT, MODEL, OAUTH, NO_AUTH, ROOT, EDITION, FEATURES } from './config/index.mjs';
 import { createAuth } from './auth.mjs';
 import { isAdminSession } from './users.mjs';
 import { makeIdentify } from './runtime/identity.mjs';
 import { createRouter } from './runtime/router.mjs';
-import { installFatalGuard } from './runtime/fatal-guard.mjs';
+import { installFatalGuard, onFault } from './runtime/fatal-guard.mjs';
 import { installLifeLog } from './runtime/lifelog.mjs';
 import { installLogRing } from './runtime/log-ring.mjs';
 import { initInflight } from './runtime/inflight.mjs';
-import { initFollowups } from './runtime/followups.mjs';
 import { initSessionStores } from './runtime/gen.mjs';
 import { initStatus } from './runtime/status.mjs';
 import { initCtxUsage } from './runtime/ctx-usage.mjs';
@@ -31,7 +31,6 @@ import { registerAdminRoutes } from './routes/admin.mjs';
 import { registerAuthRoutes } from './routes/auth.mjs';
 import { registerPairRoutes } from './routes/pair.mjs';
 import { registerChatRoutes } from './routes/chat.mjs';
-import { registerFollowupRoutes } from './routes/followups.mjs';
 import { registerUploadRoutes } from './routes/upload.mjs';
 import { registerSessionRoutes } from './routes/sessions.mjs';
 import { registerOverviewRoutes } from './routes/overview.mjs';
@@ -50,10 +49,14 @@ import { registerHarnessRoutes } from './routes/harness.mjs';
 import { registerClaudeDockRoutes } from './routes/claude-dock.mjs';
 import { registerClaudeTaskRoutes } from './routes/claude-tasks.mjs';
 import { registerUiStateRoutes } from './routes/ui-state.mjs';
+import { registerFeedbackRoutes, envInfo as feedbackEnv } from './routes/feedback.mjs';
+import { recordError, flushErrors } from './feedback/errors.mjs';
+import { startFeedback } from './feedback/auto.mjs';
+import { programVersion } from './feedback/report.mjs';
 
 // 最先装：在此之后发生的任何未捕获异常/未处理拒绝都不再直接掐死这台常驻服务
 // （PTY、正在跑的轮全都挂在这个进程上）。见 fatal-guard.mjs。
-installFatalGuard('bridge');
+installFatalGuard('bridge', path.join(ROOT, 'crashdumps'));
 // 最近日志留一份在内存里：远程管理的控制台「服务控制」页看（journald / docker logs 手机上够不着）。
 installLogRing();
 // 紧随其后：进程的生（pid/时间）、活（5min 心跳带 rss）、死（退出原因）各留一行。
@@ -68,7 +71,6 @@ initSessionStores(ROOT);
 // 上一条命死在半途的轮：在它们的 transcript 上补一条「本轮被中断」，
 // 并记下标记供 /api/attach 当场把前端收敛掉。见 runtime/inflight.mjs。
 initInflight(ROOT);
-initFollowups(ROOT);   // 追问队列（每会话一份，followups.json）：见 runtime/followups.mjs
 
 // 出站代理必须在任何出站调用与子进程 spawn 之前定好：子进程只在 spawn 那一刻继承
 // process.env，晚一步就不生效。见 runtime/net-proxy.mjs。
@@ -81,6 +83,16 @@ const identify = makeIdentify({ authOk, getCookie, bearerToken, queryToken, reso
 const identifySnap = makeIdentify({ authOk, getCookie, bearerToken, queryToken, resolveShare: resolveShareToken, resolveSnap: resolveSnapToken });
 
 const router = createRouter();
+
+// 问题反馈：没接住的异常、路由 500 记进 feedback/errors.json（归一、脱敏，只留我们自己代码的帧）。
+// 用户报告问题时附上最近的几条；开了自动上报的，新错误会自动发一份。见 src/feedback/。
+const FEEDBACK_VERSION = programVersion();
+onFault((kind, err) => {
+  // 进程可能马上就要被判坏状态退出了：记完立刻落盘，不等防抖
+  recordError('server', err instanceof Error ? err : { name: kind, message: String(err) }, { version: FEEDBACK_VERSION }).then(flushErrors);
+});
+router.onError((err) => { recordError('server', err, { version: FEEDBACK_VERSION }); });
+startFeedback({ envInfo: feedbackEnv });
 
 // 所有 /api/* 响应：不外泄 Referer；非 GET 写操作带了外站 Origin 一律拒（CSRF 纵深防御——
 // cookie 会话仅靠 SameSite=Lax 在部分 WebView 下不稳）。不带 Origin（顶级导航）放行，交给
@@ -130,7 +142,6 @@ registerAndroidAppRoutes(router);                             // /api/app/androi
 registerAuthRoutes(router, { adminCredential, adminGen, identify, getCookie, bearerToken, authCookie, clearAuthCookie, userCookie, clearUserCookie }); // /api/auth, /api/login, /api/register, /api/logout
 registerPairRoutes(router, { identify, adminGen, authCookie, userCookie }); // /api/pair/{new,wait,scan,approve,reject,claim} 扫码登录（扫码的一侧只认 admin/user 登录态）
 registerChatRoutes(router, { authOk, identify: identifySnap }); // /api/chat, /api/answer（快照身份可用）
-registerFollowupRoutes(router, { identify: identifySnap }); // /api/queue/*（快照身份在路由内部被拒）
 registerExtensionRoutes(router, { identify });                // /api/extensions* — 扩展中心（技能/连接器/插件，admin）
 registerAgentRoutes(router, { identify });                    // /api/agents — 设置「Agent」页：各 agent 的勾选 / 能跑 / 认证（admin，可远程）
 registerMeRoutes(router, { identify, getCookie, bearerToken }); // /api/me/{usage,password} — 用户自助：看自己的额度、改自己的密码
@@ -145,6 +156,7 @@ registerHarnessRoutes(router, { identify });                  // /api/harness/* 
 registerClaudeDockRoutes(router, { identify: identifySnap }); // /api/claude/{review,term,dock}/* — Claude 分页右侧工作台（快照身份=审阅/文件，终端仍要 shell）
 registerClaudeTaskRoutes(router, { identify: identifySnap }); // GET /api/claude/agent-transcript（子 agent 转录）+ POST /api/claude/task/stop（任务面板单条停止，鉴权同 /api/session）
 registerUiStateRoutes(router, { identify: identifySnap });    // /api/ui/{state,answer} — 工作区人机协同上行（视图上报 + 截图/草稿应答）
+registerFeedbackRoutes(router, { identify });                 // /api/feedback* — 报告问题（草稿 → 用户同意 → 经 Worker 提到 GitHub）、自动上报开关
 
 registerRoutineRoutes(router, { authOk, identify });          // /api/routines*
 registerAdminRoutes(router, { authOk, adminCredential, adminGen }); // /api/admin/*, /api/capabilities

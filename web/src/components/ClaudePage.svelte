@@ -10,7 +10,6 @@
   import ClaudeLogo from './ClaudeLogo.svelte';
   import ClaudeCodeWordmark from './claude/ClaudeCodeWordmark.svelte';
   import RefusalBand from './claude/RefusalBand.svelte';
-  import QueuePanel from './QueuePanel.svelte';
   import RoutinesPage from './RoutinesPage.svelte';
   import CustomizePage from './CustomizePage.svelte';
   import { api } from '../lib/api.js';
@@ -24,7 +23,7 @@
   import { busStart, busStop, busOn, busConnected } from '../lib/bus.js';
   import { placeTouched } from '../lib/sessionsOrder.js';
   import { isStarred, toggleStar, titleFor, renameSession } from '../lib/library.svelte.js';
-  import { registerCloser, setSessionNav, noteSession } from '../lib/nav.js';
+  import { registerCloser } from '../lib/nav.js';
   import { marquee } from '../lib/marquee.js';
   import { cacheSessions, getCachedSessions, removeCachedMessages } from '../lib/cache.js';
   import { absorbLastPrefs } from '../lib/chatPrefs.js';
@@ -38,7 +37,6 @@
   import { agentDropZone, attachToAgent, dtHasWsFiles, wsDescriptorFrom, attachDescriptorToAgent, WS_FILE } from '../lib/fileDrag.js';
   import { CHAT_REF, isChatRef, canQuote, quoteSession } from '../lib/chatQuote.js';
   import { IS_CSNAP } from '../lib/csnap.js';
-  import { onNewSessionKey } from '../lib/shortcuts.js';
   import { t, tc, tr } from '../lib/i18n.js';
 
   // 从工作空间拎一份文件过来松手 = 挂进【当前这个会话】的输入栏（不移动文件本身）。
@@ -578,24 +576,6 @@
   const sessionProjId = $derived(session.id
     ? (sessions.find((s) => s.id === session.id)?.projectId || session.projectId || null)
     : (session.projectId || null));
-
-  // ⌘⇧O / Ctrl+Shift+O：在当前会话所在的项目里开新会话（焦点在分屏格时由那一格自己处理）。
-  $effect(() => {
-    if (ui.screen !== 'claude') return;
-    return onNewSessionKey(() => { closeDrawer(); newConversation(sessionProjId || undefined); });
-  });
-
-  // 浏览器前进/后退在看过的会话间跳（lib/nav.js 的会话历史）：本页登记「当前是谁 / 怎么切过去」，
-  // 会话一变就记一笔。分屏的 iframe 那一格不记——同源 iframe 的 pushState 会混进顶层历史。
-  $effect(() => setSessionNav({
-    current: () => ({ sess: session.id || null, proj: sessionProjId }),
-    open: (st) => {
-      closeDrawer();
-      if (st.sess) { session.projectId = st.proj || null; openSession(st.sess).catch(() => {}); }
-      else newConversation(st.proj || undefined);
-    },
-  }));
-  $effect(() => { const id = session.id, proj = sessionProjId; untrack(() => noteSession(id, proj)); });
 
   // —— 右侧工作台（审阅/终端/浏览器/文件）：作用域=当前会话的工作空间路径 ——
   // 会话切换/项目变化自动跟随（setDockWs 内部有等值跳过；面板经 {#key} 随 ws 重建）。
@@ -1171,8 +1151,6 @@
          输入栏底下穿过）；但它不受「滚到底才显形」约束：这是一条要人处理的通知，不是装饰。
          高度随内容进 .composer-wrap 的 ResizeObserver 量进 --composer-h，滚动区底衬自动加高。 -->
     <div class="band-slot"><RefusalBand sessionId={session.id} /></div>
-    <!-- 追问队列面板：快照访客没有这组接口（后端 403），不挂载，省一次必然失败的 GET -->
-    {#if !IS_CSNAP}<QueuePanel />{/if}
     <div class="composer-inner" bind:this={composerInnerEl} in:receiveComposer={{ key: 'composer' }} out:sendComposer={{ key: 'composer' }}><Composer placeholder={tc('claude', '发消息…')} /></div>
   </div>
 {/if}
@@ -1224,7 +1202,6 @@
       <button class="d-recent" use:dropZone={sessionDrop(s)} onclick={() => pickSession(s)}>
         {#if s.thinking || s.pending}<span class="d-dot {s.thinking ? 'work' : 'ask'}"></span>{/if}
         <span class="d-title" use:marquee><span class="d-scroll">{tr(titleFor(s.id, s.title)) || t('（无标题）')}</span></span>
-        {#if s.origin === 'routine'}<span class="d-routine" title={t('定时路由自动运行')}>{t('定时')}</span>{/if}
       </button>
       <button class="d-more" aria-label={t('更多')} onclick={(e) => openMenu(e, 'session', s.id)}><span class="ic">&#xe062;</span></button>
     </div>
@@ -1625,9 +1602,6 @@
   .d-row.indent .d-dot { position: absolute; left: -14px; top: 50%; transform: translateY(-50%); }
   .d-dot.work { background: var(--coral); animation: pulse 1.2s ease-in-out infinite; }
   .d-dot.ask { background: var(--warn); animation: blink 1s steps(2) infinite; }
-  /* 定时路由跑出来的会话：标题右边挂一枚小徽标（服务端下发 origin='routine'） */
-  .d-routine { flex: none; align-self: center; font-size: 10px; line-height: 1; padding: 3px 6px; margin-left: 6px;
-    border-radius: 999px; border: 1px solid color-mix(in srgb, var(--muted) 45%, transparent); color: var(--muted); }
   @keyframes pulse { 50% { opacity: .4; } }
   @keyframes blink { 50% { opacity: 0; } }
 

@@ -17,7 +17,6 @@
   import ClaudeLogo from './ClaudeLogo.svelte';
   import WorkspaceChips from './WorkspaceChips.svelte';
   import RefusalBand from './claude/RefusalBand.svelte';
-  import QueuePanel from './QueuePanel.svelte';
   import ClaudeDock from './dock/ClaudeDock.svelte';
   import MediaViewer from './preview/MediaViewer.svelte';
   import DragLayer from './DragLayer.svelte';
@@ -34,7 +33,6 @@
   import { IS_PANE, SOLO_ID, PANE_MSG, isPaneMsg } from '../lib/solo.js';
   import { quoteSession } from '../lib/chatQuote.js';
   import { dockOverlayFor } from '../lib/claudeSplit.js';
-  import { onNewSessionKey } from '../lib/shortcuts.js';
   import { t, tc } from '../lib/i18n.js';
 
   // 'boot' 加载中 | 'login' 没登录（本页不带登录卡：主窗口登录后再拖一次即可）| 'ready'
@@ -89,9 +87,6 @@
       newConversation(d.projectId || undefined);   // 分屏时焦点在这一格、侧栏点了项目行
     }
   }
-
-  // ⌘⇧O / Ctrl+Shift+O：在这一格当前会话的项目里开新会话
-  $effect(() => onNewSessionKey(() => newConversation(session.projectId || undefined)));
 
   // 主题跟着宿主 / 其它窗口走：别处一切换，localStorage 的 storage 事件就到这儿
   function onStorage(e) {
@@ -203,7 +198,6 @@
           <div class="composer-wrap" bind:this={composerWrapEl}>
             {#if showChips}<div class="chips-slot" class:foot={atBottom}><WorkspaceChips name={proj.name} /></div>{/if}
             <div class="band-slot"><RefusalBand sessionId={session.id} /></div>
-            <QueuePanel />
             <div class="composer-inner" bind:this={composerInnerEl}><Composer placeholder={tc('claude', '发消息…')} /></div>
           </div>
         {/if}

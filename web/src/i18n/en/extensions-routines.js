@@ -206,7 +206,5 @@ export default {
   '每小时 · 第 {m} 分': 'Hourly at :{m}',
   '每小时的第{input}分钟': 'At minute {input} of every hour',
   '时间': 'Time',
-  '服务器时区 {tz}': 'Server time zone: {tz}',
-  '定时': 'Scheduled',
-  '定时路由自动运行': 'Run automatically by a routine',
+  '服务器时区 GMT+8': 'Server time zone: GMT+8',
 };

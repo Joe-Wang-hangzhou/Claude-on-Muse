@@ -51,7 +51,6 @@ import { noteFsChange } from './fsSync.svelte.js';
 import { storeGet, storeSet } from './store.js';
 import { IS_CSNAP } from './csnap.js';
 import { IS_SOLO } from './solo.js';
-import { setQueue } from './queue.svelte.js';
 import { prefsFor, lastPrefs, notePrefs, absorbServerPrefs } from './chatPrefs.js';
 import { mergeProgress, settleProgress, workflowNameFromInput, usageOf, normTaskStatus, taskRunning } from './taskModel.js';
 import { t as tt, tr } from './i18n.js';   // 本文件的 t 是工具行/任务局部变量，翻译函数取别名 tt
@@ -498,34 +497,6 @@ function toDeliverAtts(list, sessionId) {
       url: claudeArtifactUrl(sessionId, a.path, { name }),
       downloadUrl: claudeArtifactUrl(sessionId, a.path, { dl: true, name }) };
   });
-}
-
-// —— 追问队列事件（queue_updated）：活着的轮走它 SSE 通道（genEmit），空闲会话走账号总线
-// （busPublish）——两处都调这一个函数，只管两件事：① 把最新快照存进 lib/queue.svelte.js 的
-// 镜像（面板读它）；② 发现某条 QUEUED→STEERED 的转换就把它渲成一条用户气泡（服务端把它
-// 原地注入进了活着的 SDK 输入流，不走 newGen/attach，没有别的事件能告诉前端「刚说了什么」，
-// 这是目前能做到的最小补丁——见任务说明「Steer 消息要在聊天流里显示成用户气泡」）。
-// 自愈去重：不用计时性的 Set，直接看 chat.messages 里有没有一条 __queueId 对得上的——
-// 断线重放 / 整表替换都会让这条判断自然重新成立，不会因为「之前处理过一次」而漏掉该补的气泡，
-// 也不会在数组还留着它时重复插入。
-function hasSteerBubble(id) { return chat.messages.some((x) => x.role === 'user' && x.__queueId === id); }
-function applyQueueSnapshot(sid, list) {
-  if (!sid) return;
-  setQueue(sid, list);
-  if (sid !== session.id) return;   // 没在看这个会话：只更新镜像，不碰视图里的消息列表
-  for (const item of list || []) {
-    if (item.status !== 'STEERED' || hasSteerBubble(item.id)) continue;
-    const bubble = {
-      role: 'user', text: item.content || '',
-      attachments: (item.attachments || []).map((p) => ({ name: String(p).split(/[\\/]/).pop() || String(p), kind: 'file', url: null })),
-      inject: 'steer', __queueId: item.id,
-    };
-    const m = cur();
-    // 还在流式的那一条保持「最后一条」不变（内核的 cur() 全靠这个不变量）：插在它前面，
-    // 视觉上是「这条消息发生在已经写出来的内容之后、还没写的内容之前」，与中途注入的语义一致。
-    if (m && m.role === 'assistant' && m.status === 'streaming') chat.messages.splice(chat.messages.length - 1, 0, bubble);
-    else chat.messages.push(bubble);
-  }
 }
 
 // —— 星标运行相位：Thread 底部菊花按 claude.ai 同款映射选动画——只认「最近一种活动」。
@@ -1033,9 +1004,6 @@ function errText(e) {
 // 事件应用：晚到的旧流事件靠 live === my 一票否决——内核换流后旧流彻底失声。
 function applyLiveEvent(my, ev) {
   if (live !== my || !ev) return;
-  // 队列快照：纯附加信息，绝不该顶开/新建一条 assistant 气泡（下面 cur() 判断那套是为正文
-  // /工具事件写的），单独短路掉。
-  if (ev.type === 'queue_updated') { lastLiveAt = Date.now(); applyQueueSnapshot(ev.sessionId, ev.queue); return; }
   if ((ev.type === 'session' || ev.type === 'attach' || ev.type === 'start') && ev.sessionId) my.sessionId = ev.sessionId;
   let m = cur();
   if (!m || m.role !== 'assistant' || m.status !== 'streaming') {
@@ -1664,22 +1632,9 @@ function normSeg(s) {
   return s;
 }
 
-// Steer 注入进 SDK 输入流的正文带着这段引导前缀（见 src/agents/claude.mjs 同名常量，
-// 两边必须逐字一致）——历史重建/对账读到的用户消息如果真是这样开头的，说明它是一条
-// Steer，把前缀切掉还原成人话，并打上 inject 标记供 Thread 显示「已引导」徽标。直播路径
-// 不需要这步：applyQueueSnapshot 合成的气泡用的是队列项原文，从来没加过前缀。
-const STEER_PREFIX = '【Steer｜中途注入】这不是新的一轮，而是一条打断当前推进的调整指令。请结合你正在做的工作理解它：补充要求或修正就继续当前任务并调整；明确要求换任务才替换原目标。已完成的操作不需要撤销，从当前状态继续。\n\n'; // i18n-ignore 与服务端常量逐字对照用，不是界面文案
-function stripSteerPrefix(text) {
-  if (typeof text === 'string' && text.startsWith(STEER_PREFIX)) return { text: text.slice(STEER_PREFIX.length), steered: true };
-  return { text, steered: false };
-}
-
 function toUiMessages(raw, sid) {
   return (raw || []).map((msg) => {
-    if (msg.role === 'user') {
-      const { text, steered } = stripSteerPrefix(msg.text);
-      return { role: 'user', text, attachments: toUiAttachments(msg.attachments), ...(msg.uuid ? { uuid: msg.uuid } : {}), ...(steered ? { inject: 'steer' } : {}) };
-    }
+    if (msg.role === 'user') return { role: 'user', text: msg.text, attachments: toUiAttachments(msg.attachments), ...(msg.uuid ? { uuid: msg.uuid } : {}) };
     // assistant：后端现在直接给结构化 segments（text/tools/notice/ask，与直播同构）；旧后端/纯文本兜底成单 text 段。
     // startedAt 兜底用 0 而非 Date.now()：历史消息（status done）不显示计时，而稳定值让
     // 「缓存快照 vs 网络刷新」逐字节可比——内容没变就跳过整树替换。
@@ -1896,11 +1851,6 @@ export function onBusEvent(ev) {
       return;
     case 'session.touch':
       if (ev.sessionId && ev.sessionId === session.id) requestSync('touch', ev.live ? 0 : 400);
-      return;
-    // 会话空闲时的队列变更（追问队列/Steer）走账号总线而不是某个 gen 的 SSE 通道——
-    // 直播在跑时同样的事件改走 applyLiveEvent 的 queue_updated 分支，两处共用同一个函数。
-    case 'queue_updated':
-      applyQueueSnapshot(ev.sessionId, ev.queue);
       return;
   }
 }

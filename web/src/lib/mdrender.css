@@ -122,10 +122,6 @@
 .doc-md pre .mde-t-em { font-style: italic; }
 .doc-md pre .mde-t-strike { text-decoration: line-through; text-decoration-color: rgba(20, 20, 19, .45); }
 
-/* Mermaid 图表卡在纸面上用纸面色（全局样式在 app.css，默认是聊天的暗色卡底） */
-.doc-md .md-mermaid { background: var(--md-bg-2); border-color: var(--md-line); --md-codecopy-bg: var(--md-bg-2); color: var(--md-fg-2); }
-.doc-md .md-mermaid-err { color: var(--md-danger); }
-
 /* ———— 表格 ————
    按内容宽度排版（小表不再被撑满、宽表在自己框里横滚），尊重列对齐，单元格顶端对齐、
    每格至少 64px（窄栏里中文不会被挤成一字一行）——与编辑态表格 widget 同一套数值。 */

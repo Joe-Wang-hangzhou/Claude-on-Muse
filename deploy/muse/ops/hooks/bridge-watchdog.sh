@@ -41,13 +41,20 @@ running_dir() {
   [ -z "$d" ] || echo "$d"
 }
 local_ok() { curl --noproxy '*' --fail --silent --max-time 10 -o /dev/null "http://127.0.0.1:$PORT/healthz"; }
+# 更新失败时：用户事先同意过自动上报，就顺手报给开发者（bootstrap.sh report --auto 自己会看开关、一天只报一次）。
+# 回 sent / off / dup / queued / failed，放进 wake 的 payload，Muse 据此告诉用户「已自动报告」或问他要不要报。
+auto_report_update_failed() {
+  local out; out="$(timeout 60 bash "$OPS/bootstrap.sh" report --auto --kind update_failed --title "Update to ${1:-new version} failed" 2>&1 || true)"
+  printf '%s' "$out" | grep -oE '^AUTO=[a-z]+' | tail -1 | cut -d= -f2 | grep . || echo failed
+}
 # bootstrap.sh 的安装 / 更新正在后台跑（它登记在 install.pid）
 busy() { local p; p="$(cat "$OPS/install.pid" 2>/dev/null || true)"; [ -n "$p" ] && kill -0 "$p" 2>/dev/null; }
 
 # --- 后台自动更新在下载 / 构建阶段就失败了（还没切换，旧版本照常在跑）---
 if [ -f "$OPS/update-error" ] && [ "$DRY" != 1 ]; then
   rm -f "$OPS/update-error"
-  wake "bridge 自动更新失败" "$(jq -n --arg old "$(head -1 "$RELS/current/deploy/muse/VERSION" 2>/dev/null)"     --arg logs "$(tail -40 "$OPS/install-progress.log" 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g')" '{kind:"update_failed", version:"", rolled_back_to:$old, recent_logs:$logs}')"
+  rep="$(auto_report_update_failed "$(cat "$OPS/update-notified" 2>/dev/null)")"
+  wake "bridge 自动更新失败" "$(jq -n --arg old "$(head -1 "$RELS/current/deploy/muse/VERSION" 2>/dev/null)"     --arg logs "$(tail -40 "$OPS/install-progress.log" 2>/dev/null | sed -E 's/\x1b\[[0-9;]*m//g')" --arg rep "$rep" '{kind:"update_failed", version:"", rolled_back_to:$old, recent_logs:$logs, auto_reported:$rep}')"
   exit 0
 fi
 
@@ -70,7 +77,8 @@ if [ -f "$PS" ] && [ "$DRY" != 1 ]; then
       systemctl reset-failed bridge.service 2>/dev/null || true
       systemctl restart bridge.service || true
       rm -f "$PS"
-      wake "bridge 更新失败，已退回旧版本" "$(jq -n --arg v "$ver" --arg old "$(head -1 "$from/deploy/muse/VERSION" 2>/dev/null)" --arg logs "$logs" '{kind:"update_failed", version:$v, rolled_back_to:$old, recent_logs:$logs}')"
+      rep="$(auto_report_update_failed "$ver")"
+      wake "bridge 更新失败，已退回旧版本" "$(jq -n --arg v "$ver" --arg old "$(head -1 "$from/deploy/muse/VERSION" 2>/dev/null)" --arg logs "$logs" --arg rep "$rep" '{kind:"update_failed", version:$v, rolled_back_to:$old, recent_logs:$logs, auto_reported:$rep}')"
       exit 0
     fi
     jq --argjson f "$fails" '.fails = $f' "$PS" > "$PS.tmp" && mv "$PS.tmp" "$PS"
@@ -95,6 +103,12 @@ if [ -n "${CHANNEL:-}" ] && [ ! -f "$PS" ] && [ "$DRY" != 1 ] && ! busy && \
   # -L 必须有：GitHub 的 releases/latest/download/… 先 302 到具体标签，不跟跳就只拿到空 body，永远「没有新版本」
   if m="$(curl -fsSL --max-time 20 "$CHANNEL" 2>/dev/null)" && latest="$(jq -r '.commit // empty' <<<"$m")" && [ -n "$latest" ]; then
     installed="$(head -1 "$RELS/current/deploy/muse/VERSION" 2>/dev/null | cut -d' ' -f1)"
+    # 已知问题：存一份给 bootstrap.sh known-issues、结果块用（老频道没有这个字段就不动旧缓存）
+    if jq -e '.known_issues' >/dev/null 2>&1 <<<"$m"; then
+      jq -c '.known_issues' <<<"$m" > "$OPS/known-issues.json.new" && mv -f "$OPS/known-issues.json.new" "$OPS/known-issues.json"
+    fi
+    # 某个版本（提交短哈希，按前缀比）受不受某条已知问题影响
+    KI_HIT='def hit($h): ($h != "") and any(.commits[]?; . as $c | ($h | startswith($c)) or ($c | startswith($h)));'
     if [ "$latest" != "$installed" ] && [ "$latest" != "$(cat "$OPS/update-notified" 2>/dev/null)" ]; then
       echo "$latest" > "$OPS/update-notified"
       if [ "${AUTO_UPDATE:-0}" = 1 ]; then
@@ -105,9 +119,28 @@ if [ -n "${CHANNEL:-}" ] && [ ! -f "$PS" ] && [ "$DRY" != 1 ] && ! busy && \
           "$OPS/bootstrap.sh" "$OPS/install-progress.log" "$OPS/update-error" < /dev/null > /dev/null 2>&1 &
         log "自动更新已开始" "{\"latest\":\"$latest\"}"
       else
+        # 这台机器报告过、新版本里修好了的问题（latest.json 的 fixed = 这个版本修掉的 Issue 编号）
+        fixed="$(jq -r --argjson f "$(jq -c '.fixed // []' <<<"$m" 2>/dev/null || echo '[]')" \
+          '[.[] | select(.issue != null and ((.issue.number) as $n | $f | index($n)))] | unique_by(.issue.number) | map("#\(.issue.number) \(.title)") | join("; ")' \
+          "$DATA/feedback/sent.json" 2>/dev/null || true)"
+        # 影响当前版本、新版本里已经没有了的已知问题：更新的理由之一
+        kfix="$(jq -r --arg a "$installed" --arg b "$latest" "$KI_HIT"' [.[]? | select(hit($a) and (hit($b) | not)) | .title] | join("; ")' \
+          "$OPS/known-issues.json" 2>/dev/null || true)"
         wake "bridge 有新版本" "$(jq -n --arg cur "$(head -1 "$RELS/current/deploy/muse/VERSION" 2>/dev/null)" \
-          --arg v "$(jq -r '.version // ""' <<<"$m")" --arg notes "$(jq -r '.notes // ""' <<<"$m")" \
-          '{kind:"update_available", installed:$cur, latest:$v, notes:$notes}')"
+          --arg v "$(jq -r '.version // ""' <<<"$m")" --arg notes "$(jq -r '.notes // ""' <<<"$m")" --arg fixed "$fixed" --arg kfix "$kfix" \
+          '{kind:"update_available", installed:$cur, latest:$v, notes:$notes, your_reports_fixed:$fixed, fixes_known_issues:$kfix}')"
+        exit 0
+      fi
+    fi
+    # 影响当前版本、而且维护者标了「要主动告诉用户」（notify）的已知问题：每条只说一次
+    if [ -f "$OPS/known-issues.json" ] && [ -n "$installed" ]; then
+      told="$(cat "$OPS/known-issues-notified" 2>/dev/null || true)"
+      new_ki="$(jq -c --arg h "$installed" --arg told "$told" "$KI_HIT"' [.[]? | select(.notify == true and hit($h) and ((.id) as $i | ($told | split("\n") | index($i)) | not))]' \
+        "$OPS/known-issues.json" 2>/dev/null || echo '[]')"
+      if [ "$(jq 'length' <<<"$new_ki" 2>/dev/null || echo 0)" -gt 0 ]; then
+        jq -r '.[].id' <<<"$new_ki" >> "$OPS/known-issues-notified"
+        wake "bridge 已知问题" "$(jq -n --argjson issues "$(jq -c '[.[] | {title, symptom, workaround, fixed, fixed_in, issue}]' <<<"$new_ki")" \
+          '{kind:"known_issue", issues:$issues}')"
         exit 0
       fi
     fi
