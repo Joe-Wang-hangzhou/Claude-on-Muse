@@ -262,7 +262,7 @@
       if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); acceptSuggestion(); return; }
       if (e.key === 'Escape') { e.preventDefault(); dismissSuggestion(); return; }
     }
-    if (e.key === 'Enter' && !e.shiftKey && !touchUI) { e.preventDefault(); submit(); }
+    if (e.key === 'Enter' && !e.shiftKey && !touchUI && !e.isComposing) { e.preventDefault(); submit(); }
   }
   // 官方整卡 cursor-text：点卡片空白处（内边距、工具条空档）等于点输入框——聚焦并把光标放到末尾。
   // 只认「空白容器」本身被点中；按钮、弹层、附件卡各管各的。从输入框里拖选到空白处松手时
