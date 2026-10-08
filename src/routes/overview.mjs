@@ -14,6 +14,7 @@ import { interruptedRun, clearInterrupted, INTERRUPT_NOTE } from '../runtime/inf
 import { busAttach } from '../runtime/bus.mjs';
 import { watchSessions } from '../runtime/session-watch.mjs';
 import { sessionQuestions } from '../runtime/questions.mjs';
+import { listQueue } from '../runtime/followups.mjs';
 import { statusState, getContext, pruneStaleLimits } from '../runtime/status.mjs';
 import { getContextUsage, getEffort, getCommands } from '../runtime/ctx-usage.mjs';
 import { listSuggestions } from '../runtime/suggestions.mjs';
@@ -99,6 +100,9 @@ export function registerOverviewRoutes(router, { authOk, identify }) {
     // started server-side, so leaving + reopening the chat doesn't reset it to 0.
     // Sent as a duration (not an absolute ts) so phone/PC clock skew can't distort it.
     genWrite(res, { type: 'attach', userText: gen.userText, sessionId: gen.sessionId, done: gen.done, elapsedMs: Math.max(0, Date.now() - (gen.startedAt || Date.now())) });
+    // 当前队列现读现发一次：gen.events 里的 queue_updated（若有）只是这一轮期间的变更历史，
+    // 队列可能是在这一轮开始之前、会话空闲时改的——那些改动走账号总线广播，不进这个 gen 的缓冲。
+    if (gen.sessionId) genWrite(res, { type: 'queue_updated', sessionId: gen.sessionId, queue: listQueue(ctx.key, gen.sessionId) });
     for (const ev of gen.events) genWrite(res, ev);
     if (gen.done) { res.end(); return; }
     genSubscribe(gen, res); // live updates from here on (chat's heartbeat covers it)
@@ -172,6 +176,8 @@ export function registerOverviewRoutes(router, { authOk, identify }) {
       limits: statusState.limits || {}, context: getContext(ctx.key, sid), updatedAt: statusState.updatedAt || 0, net: outboundProxyStatus(),
       contextUsage: getContextUsage(ctx.key, sid), effort: getEffort(ctx.key, sid),
       plan: statusState.plan || null,   // 套餐名（SDK usage 的 subscription_type，OAuth token 路径下常为空）
+      // 追问队列：没有活着的 gen 时（attach 直接 204）客户端靠这里拿到当前队列状态，见 runtime/followups.mjs。
+      ...(sid ? { queue: listQueue(ctx.key, sid) } : {}),
     }));
   });
 
