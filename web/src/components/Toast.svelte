@@ -6,7 +6,7 @@
 </script>
 
 {#if toast.text}
-  <div class="toast" class:err={toast.kind === 'err'} role="status" aria-live="polite"
+  <div class="toast" class:err={toast.kind === 'err'} class:light={toast.kind === 'light'} role="status" aria-live="polite"
     in:fly={{ y: 12, duration: 180 }} out:fade={{ duration: 160 }}>{tr(toast.text)}</div>
 {/if}
 
@@ -18,5 +18,6 @@
     background: var(--surface, #2b2a27); color: var(--text, #f4f2ec);
     box-shadow: 0 6px 24px rgba(0, 0, 0, .28), inset 0 0 0 .5px var(--divider, rgba(255, 255, 255, .08));
   }
+  .toast.light { background: #fff; color: #1a1a1a; box-shadow: 0 6px 24px rgba(0, 0, 0, .14), inset 0 0 0 .5px rgba(0, 0, 0, .12); }
   .toast.err { color: #f0a494; }
 </style>

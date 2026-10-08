@@ -259,7 +259,7 @@
         // 没进队列：把文字和附件还回输入框（这期间用户又打了字就不覆盖），别让这条消息凭空消失
         if (field && !(field.innerText || '').trim()) { field.innerText = txt; empty = false; }
         if (!compose.attachments.length) compose.attachments = atts;
-        showToast(t('加入队列失败，请重试'), 'err');
+        showToast(t('加入队列失败，请重试'), 'light');
       }
       return;
     }
