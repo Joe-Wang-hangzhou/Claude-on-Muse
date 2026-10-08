@@ -42,12 +42,12 @@
     editingId = null;
     const r = await editQueueItem(sid, it.id, it.version, { content: text });
     if (r && !r.ok) {
-      showToast(r.status === 409 ? t('这条已经被执行或已变更') : t('保存失败，请重试'), 'err');
+      showToast(r.status === 409 ? t('这条已经被执行或已变更') : t('保存失败，请重试'), 'light');
     }
   }
   async function removeItem(it) {
     const r = await deleteQueueItem(sid, it.id, it.version);
-    if (r && !r.ok && r.status === 409) showToast(t('这条已经被执行或已变更'), 'err');
+    if (r && !r.ok && r.status === 409) showToast(t('这条已经被执行或已变更'), 'light');
   }
   function steerReasonText(reason) {
     if (reason === 'awaiting_answer') return t('正在等待你回答问题，暂不能注入');
@@ -56,10 +56,10 @@
   async function steerItem(it) {
     const r = await steerQueueItem(sid, it.id, it.version);
     if (!r) return;
-    if (r.status === 409) { showToast(t('这条已经被执行或已变更'), 'err'); return; }
-    if (r.outcome === 'injected') showToast(t('已注入当前轮'));
-    else if (r.outcome === 'queued_as_next_turn') showToast(t('本轮已结束，已作为下一条执行'));
-    else if (r.outcome === 'failed') showToast(steerReasonText(r.reason), 'err');
+    if (r.status === 409) { showToast(t('这条已经被执行或已变更'), 'light'); return; }
+    if (r.outcome === 'injected') showToast(t('已注入当前轮'), 'light');
+    else if (r.outcome === 'queued_as_next_turn') showToast(t('本轮已结束，已作为下一条执行'), 'light');
+    else if (r.outcome === 'failed') showToast(steerReasonText(r.reason), 'light');
   }
   async function moveItem(it, dir) {
     const arr = queuedOnly;
@@ -142,7 +142,7 @@
 <style>
   /* 队列面板：输入框正上方一叠细卡——与 Composer 同一视觉语言（--card/--divider/--muted）。
      折叠屏/手机：按钮排不下就允许换行，宁可卡片高一点，不挤爆正文。 */
-  .queue-panel { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .queue-panel { display: flex; flex-direction: column; gap: 6px; margin: 0 auto 8px; max-width: 760px; pointer-events: auto; }
   .qp-continue { display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 9px 13px; border-radius: 12px; background: var(--card); border: 1px solid var(--divider); font-size: 13px; color: var(--muted); }
   .qp-go { flex: none; padding: 6px 12px; border-radius: 9px; background: var(--text); color: var(--bg); font-size: 12.5px; }

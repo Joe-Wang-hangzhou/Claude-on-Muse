@@ -8,7 +8,7 @@
 </script>
 
 {#if toast.text}
-  <div class="toast" class:err={toast.kind === 'err'} class:has-act={!!toast.action} role="status" aria-live="polite"
+  <div class="toast" class:err={toast.kind === 'err'} class:light={toast.kind === 'light'} class:has-act={!!toast.action} role="status" aria-live="polite"
     in:fly={{ y: 12, duration: 180 }} out:fade={{ duration: 160 }}>
     <span>{tr(toast.text)}</span>
     {#if toast.action}<button class="act" onclick={act}>{t('报告问题')}</button>{/if}
@@ -25,6 +25,7 @@
     box-shadow: 0 6px 24px rgba(0, 0, 0, .28), inset 0 0 0 .5px var(--divider, rgba(255, 255, 255, .08));
   }
   .toast.has-act { padding-right: 6px; text-align: left; }
+  .toast.light { background: #fff; color: #1a1a1a; box-shadow: 0 6px 24px rgba(0, 0, 0, .14), inset 0 0 0 .5px rgba(0, 0, 0, .12); }
   .toast.err { color: #f0a494; }
   .act {
     pointer-events: auto; flex: none; height: 28px; padding: 0 12px; border: 0; border-radius: 999px; cursor: pointer;
