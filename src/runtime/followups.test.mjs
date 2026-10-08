@@ -208,6 +208,44 @@ test('markFailed / markCancelled：终态记录可查，但 claim 不会再碰�
   assert.equal(q.find((x) => x.id === a.id).status, STATUSES.FAILED);
 });
 
+test('markFailed：原因写进 item.error；requeueFront 会把它清掉', () => {
+  world();
+  const item = enqueueFollowup(KEY, SID, { content: 'x' }).item;
+  claimNextQueued(KEY, SID);
+  const r = markFailed(KEY, SID, item.id, 'cold_start_failed');
+  assert.equal(r.ok, true);
+  assert.equal(r.item.status, STATUSES.FAILED);
+  assert.equal(r.item.error, 'cold_start_failed');
+  const q = listQueue(KEY, SID);
+  assert.equal(q[0].error, 'cold_start_failed');
+});
+
+test('requeueFront：放回 QUEUED 的项目 error 字段是 null（全新的一次尝试，不带旧状态）', () => {
+  world();
+  const item = enqueueFollowup(KEY, SID, { content: 'x' }).item;
+  const claimed = claimNextQueued(KEY, SID);
+  const r = requeueFront(KEY, SID, item.id, claimed.version);
+  assert.equal(r.ok, true);
+  assert.equal(r.item.status, STATUSES.QUEUED);
+  assert.equal(r.item.error, null);
+});
+
+test('启动收尸：initFollowups 把残留的 DISPATCHING 项退回 QUEUED 置于队首，清掉 error，保留相对顺序', () => {
+  const tmp = world();
+  enqueueFollowup(KEY, SID, { content: 'a' });
+  enqueueFollowup(KEY, SID, { content: 'b' });
+  enqueueFollowup(KEY, SID, { content: 'c' });
+  claimNextQueued(KEY, SID); // a → DISPATCHING（模拟上一条命死在"刚认领、还没确认起来"那一刻）
+  claimNextQueued(KEY, SID); // b → DISPATCHING（两条都没确认过，都该被救回来）
+  // c 留 QUEUED 没被碰过
+
+  initFollowups(tmp); // 模拟进程重启收尸
+  const q = listQueue(KEY, SID);
+  assert.deepEqual(q.map((x) => x.status), [STATUSES.QUEUED, STATUSES.QUEUED, STATUSES.QUEUED]);
+  // a/b 退回 QUEUED 后排在 c 前面，且彼此的先后顺序（谁先被 claim）保留
+  assert.deepEqual(q.map((x) => x.content), ['a', 'b', 'c']);
+});
+
 test('持久化：initFollowups 重新读盘拿到同样的队列', () => {
   const tmp = world();
   enqueueFollowup(KEY, SID, { content: '持久化测试' });

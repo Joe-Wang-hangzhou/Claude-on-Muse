@@ -18,6 +18,8 @@ import { beginInflight, endInflight } from '../runtime/inflight.mjs';
 import {
   listQueue, claimNextQueued, requeueFront, markDelivered, markFailed, markSteered,
 } from '../runtime/followups.mjs';
+import { resolveSessionClaudeCtx } from '../runtime/session-project.mjs';
+import { chatPrefsFor } from '../runtime/chat-prefs.mjs';
 import { applyRateLimit, applyContext, applySdkUsage, classifyError, statusState } from '../runtime/status.mjs';
 import { normalizeContextUsage, applyContextUsage, normalizeEffortLevel, applyEffort, applyCommands, getCommands } from '../runtime/ctx-usage.mjs';
 import { setSuggestion, clearSuggestion, normalizeSuggestion } from '../runtime/suggestions.mjs';
@@ -471,23 +473,59 @@ export async function dispatchFollowupNow(ctx, sessionId) {
   }
   // 没有在跑的 gen、没有停放的 CLI：会话彻底空闲。冷起一个新 query 续聊（resume sessionId）。
   // 测试钩子：单元测试（node --test）绝不能真的 spawn SDK 子进程（本机内存/并发都顶不住，
-  // 也会打真实 API）——ctx.__testNoDispatch 让测试验证「claim/requeue 都对了」而不触发 query()。
-  // 只认这个精确字段，正常请求的 ctx（contextFor 产出）永远不带它。
+  // 也会打真实 API），也不该把 project-resolution（读写 claude-projects.json）牵扯进那些
+  // 只想测队列原语/Steer 回退的用例——ctx.__testNoDispatch 让它们在这里就提前退出。只认
+  // 这个精确字段，正常请求的 ctx（contextFor 产出）永远不带它。project 解析本身另有专门的
+  // 单测（runtime/session-project.test.mjs），不需要经过这里才能覆盖。
   if (ctx.__testNoDispatch) return { dispatched: false, reason: 'test_stub' };
+  // 项目 cwd 解析：与 routes/chat.mjs 续聊入口同一份逻辑（runtime/session-project.mjs）——
+  // 不能直接拿 routes/followups.mjs 给的裸 ctx 冷起，否则非默认项目下的会话会在错误的 cwd
+  // 里 resume，找不到自己的 transcript（2026-10-08 复盘 c142501 的队列冷启动 bug）。
+  // 这一步不消耗队首：先于 claim，失败时队列原样不动，只是还没轮到它。
+  const resolved = resolveSessionClaudeCtx(ctx, sessionId);
+  if (!resolved.ok) {
+    const item = claimNextQueued(ctx.key, sessionId);
+    if (!item) return { dispatched: false, reason: 'empty' };
+    markFailed(ctx.key, sessionId, item.id, resolved.reason);
+    broadcastQueue(ctx, sessionId);
+    return { dispatched: false, reason: 'project_resolve_failed', error: resolved.reason };
+  }
   const item = claimNextQueued(ctx.key, sessionId);
   if (!item) return { dispatched: false, reason: 'empty' };
+  // 续聊沿用这个会话上一次实际用的 model/effort/fast（runtime/chat-prefs.mjs 的 sidecar）；
+  // 从没记过（比如这个会话从来没经过选择器）就落到 routes/chat.mjs 对「请求没带」时同样的
+  // 默认值：全局默认模型、effort 不传（SDK 自己的默认档）、fast 关。
+  const prevPrefs = chatPrefsFor(resolved.ctx, sessionId);
+  const dispatchModel = prevPrefs?.model || (MODEL || undefined);
+  const dispatchEffort = prevPrefs?.effort || undefined;
+  const dispatchFast = !!prevPrefs?.fast;
+  const dispatchChatPrefs = { model: prevPrefs?.model || null, effort: prevPrefs?.effort || null, fast: dispatchFast };
   const stub = makeStubRes();
-  try {
-    await runClaudeChat(null, stub, {
-      message: item.content, sessionId, attachments: item.attachments || [], ctx, source: 'queue',
-    });
-    markDelivered(ctx.key, sessionId, item.id);
-  } catch (e) {
-    console.log('[claude] queue cold dispatch failed:', e && e.message);
-    markFailed(ctx.key, sessionId, item.id);
+  // 「起没起来」只认 gen 有没有被注册（tryStartGen 成功）：不等整轮跑完才 markDelivered——
+  // 那样进程要是中途崩了，这条消息就会一直卡在 DISPATCHING（initFollowups 兜底会把它退回
+  // QUEUED，但没必要让它平白占着「正在处理」的状态等到下次重启）。跑完与否之后交给正常的
+  // result/done 事件链，这里只负责「确认交出去了」。
+  const runP = runClaudeChat(null, stub, {
+    message: item.content, sessionId, attachments: item.attachments || [],
+    model: dispatchModel, effort: dispatchEffort, fast: dispatchFast, chatPrefs: dispatchChatPrefs,
+    ctx: resolved.ctx, source: 'queue',
+  }).catch((e) => { console.log('[claude] queue cold dispatch turn failed:', e && e.message); });
+  const deadline = Date.now() + 4000;
+  let started = false;
+  while (Date.now() < deadline) {
+    if (findGenBySession(ctx.key, sessionId)) { started = true; break; }
+    await sleep(25);
   }
+  if (started) {
+    markDelivered(ctx.key, sessionId, item.id);
+    broadcastQueue(ctx, sessionId);
+    return { dispatched: true, mode: 'cold' };
+  }
+  // 4s 内都没看到 gen 注册：大概率真没起来（并发槽满 / 同会话槽冲突 / query() 同步抛出）。
+  await runP;
+  markFailed(ctx.key, sessionId, item.id, 'cold_start_failed');
   broadcastQueue(ctx, sessionId);
-  return { dispatched: true, mode: 'cold' };
+  return { dispatched: false, reason: 'cold_start_failed' };
 }
 
 // Steer：把队列里的一条消息原子地转成「中途注入」。
@@ -1302,7 +1340,11 @@ export async function runClaudeChat(req, res, { message, sessionId, model, effor
       if (sid && sessionQuestions.has(sid)) {
         return { ok: true, outcome: 'failed', reason: 'awaiting_answer' };
       }
-      if (heldResult || doneEmitted || bgFinalized || turnClosed || abort.signal.aborted) {
+      // softStopping：软停止已经发给 CLI、正等着被打断那一轮的 result（interruptTurn 发起，
+      // 见上方定义）——这一轮马上就要收口（转入挂起或干净收尾），这时候 push 进去的内容
+      // 会落进一个正在被打断、即将被扔掉的轮次里，跟 held/定局/abort 是同一类"马上不是当前
+      // 这一轮了"，同样回退到排队，不直接注入。
+      if (heldResult || doneEmitted || bgFinalized || turnClosed || abort.signal.aborted || softStopping) {
         const r = requeueFront(ctx.key, sid, id, expectedVersion);
         if (!r.ok) return r;
         broadcastQueue(ctx, sid);
