@@ -19,6 +19,7 @@
   import { draft, registerComposerReader } from '../lib/composerBridge.svelte.js';
   import { onDoubleEsc } from '../lib/shortcuts.js';
   import { t } from '../lib/i18n.js';
+  import { showToast } from '../lib/toast.svelte.js';
 
   let { placeholder = 'Type / for skills' } = $props();
   let field = $state();
@@ -253,7 +254,13 @@
       field.textContent = '';
       empty = true;
       compose.attachments = [];
-      await addToQueue(session.id, txt, atts.map((a) => a.path).filter(Boolean));
+      const r = await addToQueue(session.id, txt, atts.map((a) => a.path).filter(Boolean));
+      if (!r || !r.ok) {
+        // 没进队列：把文字和附件还回输入框（这期间用户又打了字就不覆盖），别让这条消息凭空消失
+        if (field && !(field.innerText || '').trim()) { field.innerText = txt; empty = false; }
+        if (!compose.attachments.length) compose.attachments = atts;
+        showToast(t('加入队列失败，请重试'), 'err');
+      }
       return;
     }
     field.textContent = '';

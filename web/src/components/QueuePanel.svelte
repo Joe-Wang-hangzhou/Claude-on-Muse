@@ -6,7 +6,8 @@
   // GET 把真实状态拉回来。
   import { session } from '../lib/state.svelte.js';
   import { queueFor, queueBusy, loadQueue, editQueueItem, deleteQueueItem, reorderQueue, steerQueueItem, continueQueue } from '../lib/queue.svelte.js';
-  import { uiAlert } from '../lib/dialogs.js';
+  // 反馈走轻量 toast：uiAlert 是 window.alert，会卡住页面——每次 Steer 成功都弹一个太吵
+  import { showToast } from '../lib/toast.svelte.js';
   import { t } from '../lib/i18n.js';
 
   const sid = $derived(session.id);
@@ -41,12 +42,12 @@
     editingId = null;
     const r = await editQueueItem(sid, it.id, it.version, { content: text });
     if (r && !r.ok) {
-      uiAlert(r.status === 409 ? t('这条已经被执行或已变更') : t('保存失败，请重试'));
+      showToast(r.status === 409 ? t('这条已经被执行或已变更') : t('保存失败，请重试'), 'err');
     }
   }
   async function removeItem(it) {
     const r = await deleteQueueItem(sid, it.id, it.version);
-    if (r && !r.ok && r.status === 409) uiAlert(t('这条已经被执行或已变更'));
+    if (r && !r.ok && r.status === 409) showToast(t('这条已经被执行或已变更'), 'err');
   }
   function steerReasonText(reason) {
     if (reason === 'awaiting_answer') return t('正在等待你回答问题，暂不能注入');
@@ -55,10 +56,10 @@
   async function steerItem(it) {
     const r = await steerQueueItem(sid, it.id, it.version);
     if (!r) return;
-    if (r.status === 409) { uiAlert(t('这条已经被执行或已变更')); return; }
-    if (r.outcome === 'injected') uiAlert(t('已注入当前轮'));
-    else if (r.outcome === 'queued_as_next_turn') uiAlert(t('本轮已结束，已作为下一条执行'));
-    else if (r.outcome === 'failed') uiAlert(steerReasonText(r.reason));
+    if (r.status === 409) { showToast(t('这条已经被执行或已变更'), 'err'); return; }
+    if (r.outcome === 'injected') showToast(t('已注入当前轮'));
+    else if (r.outcome === 'queued_as_next_turn') showToast(t('本轮已结束，已作为下一条执行'));
+    else if (r.outcome === 'failed') showToast(steerReasonText(r.reason), 'err');
   }
   async function moveItem(it, dir) {
     const arr = queuedOnly;
