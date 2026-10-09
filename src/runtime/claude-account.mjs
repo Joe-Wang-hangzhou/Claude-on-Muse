@@ -102,14 +102,28 @@ export function deleteAccount(id) {
   return { ok: true, active: activeId };
 }
 
-// 每次跑 Claude query() 时构造子进程 env：叠加当前激活账号 token + 沙箱 configDir。
-// 返回 null 表示无需覆盖（configDir 为空且激活账号无 token）——此时让子进程直接继承
-// process.env（含 boot 时设的默认 token），行为与切换功能上线前一致。
+// Mac 远程开发脚本（mac-pull / mac-push / mac-test / mac-job / mac-status …）装在
+// /home/hatch/bin；Claude 子进程里的 Bash 是非登录、非交互 shell，不读
+// .bashrc / .profile，所以 PATH 里没有它。这里给每个 Claude 子进程的 env 显式加上，
+// 与 shell 类型无关（主会话 / rewind / 定时路由三个 query() 调用点都走 claudeEngineEnv）。
+// 注：仓库约定本不在代码里写个人路径——这是部署者（用户本人）的明确要求；升级后
+// 随 patches/claude-path.patch 一起重打。
+const MAC_BIN_DIR = '/home/hatch/bin';
+
+function withMacBinPath(env) {
+  const base = String((env && env.PATH) || '');
+  return { ...env, PATH: base ? MAC_BIN_DIR + ':' + base : MAC_BIN_DIR };
+}
+
+// 每次跑 Claude query() 时构造子进程 env：叠加当前激活账号 token + 沙箱 configDir，
+// 再把 /home/hatch/bin 放到 PATH 最前面。
+// 恒返回非 null（PATH 修正本身即视为一次覆盖）：调用方原来 `engineEnv || process.env`
+// / `engineEnv ? { env } : {}` 的分支语义不变——子进程拿到的仍是服务端 env 的快照，
+// 只是 PATH 必然以 /home/hatch/bin 开头。
 export function claudeEngineEnv(ctx) {
-  let touched = false;
   const env = { ...process.env };
-  if (ctx && ctx.configDir) { env.CLAUDE_CONFIG_DIR = ctx.configDir; touched = true; }
+  if (ctx && ctx.configDir) { env.CLAUDE_CONFIG_DIR = ctx.configDir; }
   const tok = activeToken();
-  if (tok) { env.CLAUDE_CODE_OAUTH_TOKEN = tok; touched = true; }
-  return touched ? env : null;
+  if (tok) { env.CLAUDE_CODE_OAUTH_TOKEN = tok; }
+  return withMacBinPath(env);
 }
