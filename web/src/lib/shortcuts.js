@@ -18,8 +18,6 @@ export function onNewSessionKey(fn) {
   window.addEventListener('keydown', onKey, true);
   return () => window.removeEventListener('keydown', onKey, true);
 }
-<<<<<<< HEAD
-
 // 双击 Esc（桌面）＝中断当前这一轮，等同点停止按钮。弹窗/菜单已消费的 Esc（defaultPrevented 或
 // 被 stopPropagation）不算；冒泡阶段监听，且组字中、长按重复一律忽略。返回卸载函数。
 export function onDoubleEsc(fn, gap = 400) {
@@ -32,5 +30,3 @@ export function onDoubleEsc(fn, gap = 400) {
   window.addEventListener('keydown', onKey);
   return () => window.removeEventListener('keydown', onKey);
 }
-=======
->>>>>>> ab0c956 (apply bridge-custom.patch (superset of session-history + new-session-shortcut))
